@@ -1,0 +1,9 @@
+{
+  "id": "environment-variables",
+  "name": "Environment Variables",
+  "version": "1.0.0",
+  "minAppVersion": "1.13.0",
+  "description": "Store API tokens and environment variables encrypted, reference them in notes by key, and let AI agents use them in requests without ever seeing the values.",
+  "author": "Emanuell Pires",
+  "isDesktopOnly": true
+}
