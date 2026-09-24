@@ -3,6 +3,15 @@ import type EnvironmentVariablesPlugin from "../main";
 import { fillChip } from "./chip";
 
 const TRIGGER = /\{\{\s*(secret|basic|bearer)\s*:\s*([A-Za-z0-9_]*)$/;
+/** An empty, already closed reference such as "{{secret:}}" also opens the list (properties only). */
+const EMPTY_CLOSED = /\{\{\s*(secret|basic|bearer)\s*:\s*\}\}$/;
+
+function propertyTrigger(before: string): { index: number; kind: string; query: string; closed: boolean } | null {
+  const open = TRIGGER.exec(before);
+  if (open) return { index: open.index, kind: open[1], query: open[2], closed: false };
+  const empty = EMPTY_CLOSED.exec(before);
+  return empty ? { index: empty.index, kind: empty[1], query: "", closed: true } : null;
+}
 
 /** Autocompletes variable names after "{{secret:", "{{basic:" or "{{bearer:". Names only, never values. */
 export class SecretNameSuggest extends EditorSuggest<string> {
@@ -53,9 +62,9 @@ class PropertySecretSuggest extends AbstractInputSuggest<string> {
   protected getSuggestions(_query: string): string[] {
     if (!propertySuggestActive || !this.plugin.store.isUnlocked) return [];
     // Read up to the caret: contenteditable text often ends with an invisible line break.
-    const match = TRIGGER.exec(textBeforeCaret(this.field));
+    const match = propertyTrigger(textBeforeCaret(this.field));
     if (!match) return [];
-    const q = match[2].toLowerCase();
+    const q = match.query.toLowerCase();
     return this.plugin.store.names().filter((n) => n.toLowerCase().includes(q));
   }
 
@@ -66,12 +75,12 @@ class PropertySecretSuggest extends AbstractInputSuggest<string> {
 
   selectSuggestion(name: string): void {
     const before = textBeforeCaret(this.field);
-    const match = TRIGGER.exec(before);
+    const match = propertyTrigger(before);
     if (!match) return;
     const full = fieldText(this.field);
     let after = full.slice(before.length).replace(/\s+$/, "");
-    if (after.startsWith("}}")) after = after.slice(2);
-    const head = `${before.slice(0, match.index)}{{${match[1]}:${name}}}`;
+    if (!match.closed && after.startsWith("}}")) after = after.slice(2);
+    const head = `${before.slice(0, match.index)}{{${match.kind}:${name}}}`;
     this.setValue(head + after);
     // Let Obsidian save the property, then put the caret after the reference.
     this.field.dispatchEvent(new Event("input", { bubbles: true }));
