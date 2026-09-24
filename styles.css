@@ -261,7 +261,10 @@
 
 /* Placeholders in notes */
 .ev-chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  vertical-align: baseline;
   padding: 0 var(--size-4-1);
   border-radius: var(--radius-s);
   background: var(--background-modifier-hover);
@@ -317,4 +320,44 @@
 
 .ev-notice-button {
   margin-top: var(--size-4-2);
+}
+
+.ev-chip-icon,
+.ev-suggestion .ev-chip-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ev-chip-icon svg {
+  width: 0.95em;
+  height: 0.95em;
+  stroke-width: 2.25;
+}
+
+.ev-suggestion {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+}
+
+.ev-suggestion .ev-chip-icon {
+  color: var(--text-accent);
+}
+
+.ev-chip-missing {
+  color: var(--text-error);
+  background: rgba(var(--color-red-rgb), 0.1);
+}
+
+.ev-prop-chip {
+  cursor: pointer;
+  margin: var(--size-2-2) var(--size-4-1);
+}
+
+.ev-prop-chip:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.ev-prop-hidden {
+  display: none !important;
 }

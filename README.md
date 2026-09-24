@@ -18,7 +18,7 @@ Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (C
 1. Click the key icon in the left ribbon to open the **Environment Variables** panel.
 2. Create a master password. Your variables are encrypted with it.
 3. Add a variable: a name (`JIRA_ACME`), a type, the value and the **allowed hosts** (`acme.atlassian.net`).
-4. In your notes, write `{{basic:JIRA_ACME}}` instead of the token. Type `{{secret:` to autocomplete names.
+4. In your notes, write `{{basic:JIRA_ACME}}` instead of the token. Type `{{secret:` to autocomplete names, in the note text or in a property value. Keys are shown as a lock chip in reading view and in the Properties panel; click a chip in Properties to edit it. A chip turns red when the name does not exist in the unlocked vault.
 5. In **AI clients**, click **Connect** next to your AI tool. The plugin turns on the local server and registers itself in the tool. There is nothing to copy or paste.
 
 Already have tokens in your notes? Select one and run **Convert selection into a variable**. When you paste something that looks like a token (Atlassian, GitHub, GitLab, OpenAI, Anthropic, AWS, Google, Slack, Stripe or a JWT) into a note, the plugin offers to store it encrypted and put a key in its place. You can turn this warning off in the settings.
