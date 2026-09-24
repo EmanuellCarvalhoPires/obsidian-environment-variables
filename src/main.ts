@@ -3,7 +3,7 @@ import { AuditLog } from "./audit/auditLog";
 import { Broker } from "./engine/broker";
 import { detectToken } from "./engine/tokenPatterns";
 import { nodeTransport } from "./engine/transport";
-import { placeholderHighlighter, renderPlaceholders } from "./editor/render";
+import { placeholderExtension, renderPlaceholders } from "./editor/render";
 import { attachPropertySuggest, SecretNameSuggest, setPropertySuggestActive } from "./editor/suggest";
 import { clearProperties, decorateProperties } from "./editor/properties";
 import { t } from "./i18n";
@@ -68,6 +68,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.ribbon.addClass("ev-ribbon");
     this.register(this.store.onChange(() => this.updateRibbon()));
     this.register(this.store.onChange(() => this.syncNameIndex()));
+    // Editor chips turn red or back when names change (unlock, lock, add, remove).
+    this.register(this.store.onChange(() => this.app.workspace.updateOptions()));
     this.updateRibbon();
 
     this.addCommand({ id: "open-panel", name: t("cmd.open"), callback: () => void this.activateView() });
@@ -123,7 +125,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     });
     this.app.workspace.onLayoutReady(() => this.schedulePropertyChips());
     this.registerMarkdownPostProcessor(renderPlaceholders);
-    this.registerEditorExtension(placeholderHighlighter);
+    this.registerEditorExtension(placeholderExtension(() => this.knownNames()));
     this.registerEvent(this.app.workspace.on("editor-paste", (evt, editor) => this.onPaste(evt, editor)));
 
     this.registerInterval(window.setInterval(() => this.checkAutoLock(), 30_000));
@@ -168,9 +170,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     if (this.propertyTimer !== undefined) window.clearTimeout(this.propertyTimer);
     this.propertyTimer = window.setTimeout(() => {
       this.propertyTimer = undefined;
-      const known = () =>
-        this.store.isUnlocked || this.data.settings.showNamesWhileLocked ? new Set(this.variableNames().map((e) => e.name)) : null;
-      for (const doc of this.propertyDocs) decorateProperties(doc, known);
+      for (const doc of this.propertyDocs) decorateProperties(doc, () => this.knownNames());
     }, 150);
   }
 
@@ -180,6 +180,12 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   variableNames(): NameEntry[] {
     if (this.store.isUnlocked) return this.store.list().map((s) => ({ name: s.name, type: s.type }));
     return this.data.settings.showNamesWhileLocked ? this.data.nameIndex : [];
+  }
+
+  /** Names to check chips against, or null when unknown (locked with the name index turned off). */
+  knownNames(): Set<string> | null {
+    if (!this.store.isUnlocked && !this.data.settings.showNamesWhileLocked) return null;
+    return new Set(this.variableNames().map((e) => e.name));
   }
 
   /** Keeps the name index in data.json in step with the vault. Runs only while unlocked. */
