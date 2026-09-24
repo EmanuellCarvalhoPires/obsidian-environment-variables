@@ -50,9 +50,10 @@ class PropertySecretSuggest extends AbstractInputSuggest<string> {
     super(plugin.app, field);
   }
 
-  protected getSuggestions(query: string): string[] {
+  protected getSuggestions(_query: string): string[] {
     if (!propertySuggestActive || !this.plugin.store.isUnlocked) return [];
-    const match = TRIGGER.exec(query);
+    // Read up to the caret: contenteditable text often ends with an invisible line break.
+    const match = TRIGGER.exec(textBeforeCaret(this.field));
     if (!match) return [];
     const q = match[2].toLowerCase();
     return this.plugin.store.names().filter((n) => n.toLowerCase().includes(q));
@@ -64,14 +65,17 @@ class PropertySecretSuggest extends AbstractInputSuggest<string> {
   }
 
   selectSuggestion(name: string): void {
-    const value = this.getValue();
-    const match = TRIGGER.exec(value);
+    const before = textBeforeCaret(this.field);
+    const match = TRIGGER.exec(before);
     if (!match) return;
-    const next = `${value.slice(0, match.index)}{{${match[1]}:${name}}}`;
-    this.setValue(next);
+    const full = fieldText(this.field);
+    let after = full.slice(before.length).replace(/\s+$/, "");
+    if (after.startsWith("}}")) after = after.slice(2);
+    const head = `${before.slice(0, match.index)}{{${match[1]}:${name}}}`;
+    this.setValue(head + after);
     // Let Obsidian save the property, then put the caret after the reference.
     this.field.dispatchEvent(new Event("input", { bubbles: true }));
-    placeCaretAtEnd(this.field);
+    placeCaret(this.field, head.length);
     this.close();
   }
 }
@@ -97,16 +101,48 @@ export function attachPropertySuggest(plugin: EnvironmentVariablesPlugin, target
   new PropertySecretSuggest(plugin, field);
 }
 
-function placeCaretAtEnd(el: PropertyField): void {
-  if (el instanceof HTMLInputElement) {
-    el.setSelectionRange(el.value.length, el.value.length);
+function fieldText(el: PropertyField): string {
+  return el.instanceOf(HTMLInputElement) ? el.value : (el.textContent ?? "");
+}
+
+/** The field's text from the start to the caret (the whole text when the caret is elsewhere). */
+function textBeforeCaret(el: PropertyField): string {
+  if (el.instanceOf(HTMLInputElement)) return el.value.slice(0, el.selectionStart ?? el.value.length);
+  const text = el.textContent ?? "";
+  const selection = el.ownerDocument.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.anchorNode || !el.contains(selection.anchorNode)) return text.replace(/\s+$/, "");
+  const range = el.ownerDocument.createRange();
+  range.selectNodeContents(el);
+  range.setEnd(selection.anchorNode, selection.anchorOffset);
+  return range.toString();
+}
+
+/** Puts the caret `offset` characters into the field. */
+function placeCaret(el: PropertyField, offset: number): void {
+  if (el.instanceOf(HTMLInputElement)) {
+    el.setSelectionRange(offset, offset);
     return;
   }
   const selection = el.ownerDocument.getSelection();
   if (!selection) return;
   const range = el.ownerDocument.createRange();
-  range.selectNodeContents(el);
-  range.collapse(false);
+  const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let left = offset;
+  let node = walker.nextNode();
+  while (node) {
+    const length = node.textContent?.length ?? 0;
+    if (left <= length) {
+      range.setStart(node, left);
+      break;
+    }
+    left -= length;
+    node = walker.nextNode();
+  }
+  if (!node) {
+    range.selectNodeContents(el);
+    range.collapse(false);
+  }
+  range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
 }
