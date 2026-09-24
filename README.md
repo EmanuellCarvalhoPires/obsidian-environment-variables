@@ -71,7 +71,7 @@ curl -s http://127.0.0.1:27150/v1/request \
 - **Encryption:** AES-256-GCM with a key derived from your master password (PBKDF2-SHA256, 600,000 iterations), using the Web Crypto API. The master password is never stored. The decrypted variables only exist in memory while the vault is unlocked.
 - **File format v2:** the header (KDF name, parameters, salt, IV) is bound to the ciphertext as associated data, so any edit is detected. KDFs are pluggable, ready for a memory-hard KDF such as Argon2id. Files in the older format v1 still open and are upgraded on unlock.
 - **Locking** drops the key, blanks every in-memory record and releases them. Decryption buffers are zeroed. JavaScript strings cannot be overwritten in place, so copies may remain in memory until garbage collection.
-- **Auto-lock** after a configurable idle time, and a "Lock now" button.
+- **Locking:** the vault stays unlocked until you click **Lock now** or close Obsidian. Optional auto-lock after an idle time (off by default).
 - **Allowed hosts:** each variable is sent only to the hosts you list. A request to any other host is refused before the value is inserted, so an AI agent tricked by a malicious page or ticket cannot send your token elsewhere.
   - **Path prefixes:** a host can be narrowed to a path, e.g. `api.example.com/v1/workspaces/123/*`. Paths with encoded slashes or backslashes are refused so a server cannot decode them into another path.
   - **Shared platforms:** a wildcard such as `*.atlassian.net` or `*.s3.amazonaws.com` also matches other customers' tenants. The plugin asks for confirmation and shows a warning; prefer the exact host. Wildcards on public suffixes (`*.com`, `*.com.br`) are refused.
