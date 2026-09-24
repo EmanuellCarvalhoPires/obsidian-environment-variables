@@ -1,5 +1,7 @@
 # Environment Variables
 
+**Hide your API tokens and other sensitive data from AI agents** such as Claude Code, Codex, Antigravity and Cursor.
+
 Store API tokens and environment variables encrypted inside your vault, reference them in notes by key, and let AI agents use them in HTTP requests **without ever seeing the values**.
 
 Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (Claude Code, Claude Desktop, Cursor, or any MCP client) needs to call an API, it sends the request to this plugin with the key. The plugin replaces the key with the real value right before sending, checks that the destination is allowed, masks the value in the response, and returns the result.
@@ -73,6 +75,7 @@ curl -s http://127.0.0.1:27150/v1/request \
 - **Allowed hosts:** each variable is sent only to the hosts you list. A request to any other host is refused before the value is inserted, so an AI agent tricked by a malicious page or ticket cannot send your token elsewhere.
   - **Path prefixes:** a host can be narrowed to a path, e.g. `api.example.com/v1/workspaces/123/*`. Paths with encoded slashes or backslashes are refused so a server cannot decode them into another path.
   - **Shared platforms:** a wildcard such as `*.atlassian.net` or `*.s3.amazonaws.com` also matches other customers' tenants. The plugin asks for confirmation and shows a warning; prefer the exact host. Wildcards on public suffixes (`*.com`, `*.com.br`) are refused.
+  - **Any host:** if you really need a variable to work with any address, turn on **Allow any host** for it (off by default, and an empty host list still allows nothing). Every request with that variable then waits for your approval, including GET, and redirects to another host are not followed. Check the address in the approval dialog every time.
 - **Per-client access (least privilege):** each AI client may use only the variables you choose when you connect it (or "all variables", which includes future ones). Other variables are refused and hidden from `list_secrets`.
 - **Headers only by default:** keys in the URL or body are refused unless you allow it per variable. This prevents a value from being saved by the API, for example inside a comment.
 - **HTTPS only**, except `http://localhost` when explicitly allowed.

@@ -30,7 +30,7 @@ const TOOLS = [
     title: "HTTP request with secret placeholders",
     description:
       "Send an HTTP request. Placeholders {{secret:NAME}}, {{secret:NAME.user}}, {{basic:NAME}} (Basic auth from username + token) and {{bearer:NAME}} are replaced with real values right before sending. " +
-      "By default placeholders are only accepted in header values, and only for the hosts allowed for that key. " +
+      "By default placeholders are only accepted in header values, and only for the hosts allowed for that key (a key marked allowAnyHost works with any https host, but the user must approve every request). " +
       "Example header: {\"Authorization\": \"{{basic:JIRA_ACME}}\"}. Values found in the response are masked as ***.",
     inputSchema: {
       type: "object",

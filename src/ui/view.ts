@@ -7,7 +7,7 @@ import { MIN_PASSWORD_LENGTH, passwordStrength } from "../store/secretStore";
 import { SecretRecord } from "../store/types";
 import { wildcardRisk } from "../engine/hosts";
 import { accessOf, ClientAccess, ClientRecord } from "../server/clients";
-import { AccessModal, ClientTokenModal, ConfirmModal, PromptModal, referenceFor, SecretModal } from "./modals";
+import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal } from "./modals";
 
 export const VIEW_TYPE = "environment-variables-view";
 export const ICON_UNLOCKED = "key-round";
@@ -217,11 +217,11 @@ export class EnvironmentVariablesView extends ItemView {
     if (secret.description) item.createDiv({ text: secret.description, cls: "ev-muted" });
     const meta = item.createDiv({ cls: "ev-item-meta" });
     meta.createSpan({
-      text: `${t("view.col.hosts")}: ${secret.allowedHosts.length ? secret.allowedHosts.join(", ") : t("view.noHosts")}`,
-      cls: secret.allowedHosts.length ? "" : "ev-warning",
+      text: `${t("view.col.hosts")}: ${hostsLabel(secret)}`,
+      cls: secret.allowAnyHost === true || secret.allowedHosts.length === 0 ? "ev-warning" : "",
     });
     meta.createSpan({ text: `${t("view.col.lastUsed")}: ${secret.lastUsedAt ? new Date(secret.lastUsedAt).toLocaleString() : t("view.never")}` });
-    const shared = secret.allowedHosts.filter((h) => wildcardRisk(h) === "multitenant");
+    const shared = secret.allowAnyHost === true ? [] : secret.allowedHosts.filter((h) => wildcardRisk(h) === "multitenant");
     if (shared.length) item.createDiv({ text: `⚠ ${t("view.multitenantWarning", { hosts: shared.join(", ") })}`, cls: "ev-warning ev-item-warning" });
 
     const actions = item.createDiv({ cls: "ev-actions" });

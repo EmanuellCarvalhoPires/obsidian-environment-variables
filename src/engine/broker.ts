@@ -19,6 +19,8 @@ export interface ApprovalRequest {
   /** Pre-substitution target: never contains a value. */
   url: string;
   secrets: string[];
+  /** Secrets in this request that may go to any host: the dialog asks the user to check the address. */
+  anyHost?: string[];
 }
 
 /** Asks the user to approve a request. Resolves false when denied or timed out. */
@@ -98,7 +100,8 @@ export class Broker {
     const redactor = createRedactor(prepared.usedSecrets);
 
     if (prepared.needsApproval) {
-      const approved = await this.approve({ client: who, method: prepared.method, url: target, secrets: names });
+      const anyHost = prepared.usedSecrets.filter((s) => s.allowAnyHost === true).map((s) => s.name);
+      const approved = await this.approve({ client: who, method: prepared.method, url: target, secrets: names, anyHost });
       if (!approved) {
         this.audit.add({ client: who, action: "request", secrets: names, method: prepared.method, target, outcome: "denied" });
         return fail("denied", "The user denied this request in Obsidian.");

@@ -9,6 +9,12 @@ import { ApprovalPolicy, SecretRecord, SecretType } from "../store/types";
 const TYPES: SecretType[] = ["token", "basic", "bearer", "header", "env"];
 const APPROVALS: ApprovalPolicy[] = ["never", "writes", "always"];
 
+/** Hosts shown next to a variable. Never contains a value. */
+export function hostsLabel(secret: Pick<SecretRecord, "allowedHosts" | "allowAnyHost">): string {
+  if (secret.allowAnyHost === true) return t("view.anyHost");
+  return secret.allowedHosts.length ? secret.allowedHosts.join(", ") : t("view.noHosts");
+}
+
 export function referenceFor(secret: Pick<SecretRecord, "name" | "type">): string {
   if (secret.type === "basic") return `{{basic:${secret.name}}}`;
   if (secret.type === "bearer") return `{{bearer:${secret.name}}}`;
@@ -34,6 +40,7 @@ export class SecretModal extends Modal {
       value: "",
       description: "",
       allowedHosts: [],
+      allowAnyHost: false,
       allowHttpLocalhost: false,
       placement: { headers: true as const, url: false, body: false },
       approval: "writes" as ApprovalPolicy,
@@ -45,6 +52,7 @@ export class SecretModal extends Modal {
       value: existing ? "" : prefillValue,
       description: base.description,
       allowedHosts: [...base.allowedHosts],
+      allowAnyHost: base.allowAnyHost === true,
       allowHttpLocalhost: base.allowHttpLocalhost,
       placement: { ...base.placement },
       approval: base.approval,
@@ -99,15 +107,28 @@ export class SecretModal extends Modal {
       txt.setValue(this.draft.description).onChange((v) => (this.draft.description = v)),
     );
 
-    new Setting(contentEl)
-      .setName(t("modal.secret.hosts"))
-      .setDesc(t("modal.secret.hostsDesc"))
-      .addTextArea((ta) => {
-        ta.inputEl.rows = 3;
-        ta.setPlaceholder("acme.atlassian.net")
-          .setValue(this.draft.allowedHosts.join("\n"))
-          .onChange((v) => (this.draft.allowedHosts = v.split(/[\n,]/).map((h) => h.trim()).filter(Boolean)));
-      });
+    const anyHost = new Setting(contentEl)
+      .setName(t("modal.secret.anyHost"))
+      .setDesc(t("modal.secret.anyHostDesc"))
+      .addToggle((tg) =>
+        tg.setValue(this.draft.allowAnyHost === true).onChange((v) => {
+          this.draft.allowAnyHost = v;
+          this.render();
+        }),
+      );
+    if (this.draft.allowAnyHost) anyHost.descEl.addClass("ev-warning");
+
+    if (!this.draft.allowAnyHost) {
+      new Setting(contentEl)
+        .setName(t("modal.secret.hosts"))
+        .setDesc(t("modal.secret.hostsDesc"))
+        .addTextArea((ta) => {
+          ta.inputEl.rows = 3;
+          ta.setPlaceholder("acme.atlassian.net")
+            .setValue(this.draft.allowedHosts.join("\n"))
+            .onChange((v) => (this.draft.allowedHosts = v.split(/[\n,]/).map((h) => h.trim()).filter(Boolean)));
+        });
+    }
 
     new Setting(contentEl).setName(t("modal.secret.approval")).addDropdown((dd) => {
       for (const a of APPROVALS) dd.addOption(a, t(`approval.${a}`));
@@ -137,6 +158,12 @@ export class SecretModal extends Modal {
   }
 
   private async save(): Promise<void> {
+    if (this.draft.allowAnyHost) {
+      // Turning it on is a deliberate choice: confirm once, not on every later edit.
+      if (this.existing?.allowAnyHost === true) return this.commit();
+      new ConfirmModal(this.app, t("modal.secret.anyHostConfirm", { name: this.draft.name || "?" }), () => this.commit()).open();
+      return;
+    }
     const badHost = this.draft.allowedHosts.find((h) => !isValidPattern(h));
     if (badHost) {
       const tooBroad = wildcardRisk(badHost) === "public-suffix";
@@ -197,6 +224,9 @@ export class ApprovalModal extends Modal {
     contentEl.createEl("p", { text: t("modal.approval.body", { client: this.request.client, secrets: this.request.secrets.join(", ") }) });
     const pre = contentEl.createEl("pre", { cls: "ev-approval-target" });
     pre.setText(`${this.request.method} ${this.request.url}`);
+    if (this.request.anyHost?.length) {
+      contentEl.createEl("p", { text: `⚠ ${t("modal.approval.anyHost", { secrets: this.request.anyHost.join(", ") })}`, cls: "ev-warning" });
+    }
     const countdown = contentEl.createEl("p", { cls: "ev-muted" });
     let remaining = this.timeoutSeconds;
     const tick = () => {
@@ -354,7 +384,7 @@ export class SecretPickerModal extends SuggestModal<string> {
   renderSuggestion(name: string, el: HTMLElement): void {
     const secret = this.store.get(name);
     el.createDiv({ text: name });
-    if (secret) el.createEl("small", { text: `${t(`type.${secret.type}`)} · ${secret.allowedHosts.join(", ")}`, cls: "ev-muted" });
+    if (secret) el.createEl("small", { text: `${t(`type.${secret.type}`)} · ${hostsLabel(secret)}`, cls: "ev-muted" });
   }
 
   onChooseSuggestion(name: string): void {
@@ -406,7 +436,7 @@ export class AccessModal extends Modal {
       for (const s of secrets) {
         new Setting(contentEl)
           .setName(s.name)
-          .setDesc(s.allowedHosts.join(", "))
+          .setDesc(hostsLabel(s))
           .addToggle((tg) =>
             tg.setValue(this.selected.has(s.id)).onChange((v) => {
               if (v) this.selected.add(s.id);
