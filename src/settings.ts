@@ -16,7 +16,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   serverEnabled: false,
   port: 27150,
-  autoLockMinutes: 15,
+  autoLockMinutes: 0,
   approvalTimeoutSeconds: 120,
   timeoutSeconds: 30,
   maxResponseMB: 10,
@@ -37,11 +37,22 @@ export interface PluginData {
   audit: AuditEntry[];
   /** Names and types only, so references can be inserted while the vault is locked. */
   nameIndex: NameEntry[];
+  /** Settings migrations already applied (see migrate). */
+  settingsRevision: number;
 }
 
+/** Auto-lock used to be on (15 minutes) by default. */
+const OLD_AUTO_LOCK_DEFAULT = 15;
+const SETTINGS_REVISION = 1;
+
 export function withDefaults(raw: Partial<PluginData> | null | undefined): PluginData {
+  const settings = { ...DEFAULT_SETTINGS, ...(raw?.settings ?? {}) };
+  const revision = typeof raw?.settingsRevision === "number" ? raw.settingsRevision : 0;
+  // Revision 1: auto-lock is off by default. Only data still on the old default changes.
+  if (revision < 1 && raw?.settings && settings.autoLockMinutes === OLD_AUTO_LOCK_DEFAULT) settings.autoLockMinutes = 0;
   return {
-    settings: { ...DEFAULT_SETTINGS, ...(raw?.settings ?? {}) },
+    settings,
+    settingsRevision: SETTINGS_REVISION,
     clients: Array.isArray(raw?.clients) ? raw.clients : [],
     audit: Array.isArray(raw?.audit) ? raw.audit : [],
     nameIndex: Array.isArray(raw?.nameIndex)
