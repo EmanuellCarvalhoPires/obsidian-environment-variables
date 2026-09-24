@@ -98,12 +98,15 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     setPropertySuggestActive(true);
     this.register(() => setPropertySuggestActive(false));
     const watchDocument = (doc: Document) => {
+      if (this.propertyDocs.has(doc)) return;
       this.propertyDocs.add(doc);
       this.registerDomEvent(doc, "focusin", (evt) => attachPropertySuggest(this, evt.target));
       // After editing, show the chip again once Obsidian has saved the value.
       this.registerDomEvent(doc, "focusout", () => this.schedulePropertyChips());
     };
-    watchDocument(activeDocument);
+    // Not activeDocument: when the plugin is enabled from Settings, that is not the main window.
+    watchDocument(this.app.workspace.containerEl.ownerDocument);
+    this.app.workspace.iterateAllLeaves((leaf) => watchDocument(leaf.view.containerEl.ownerDocument));
     this.registerEvent(this.app.workspace.on("window-open", (win) => watchDocument(win.doc)));
     this.registerEvent(this.app.workspace.on("window-close", (win) => this.propertyDocs.delete(win.doc)));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.schedulePropertyChips()));
@@ -114,6 +117,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       if (this.propertyTimer !== undefined) window.clearTimeout(this.propertyTimer);
       for (const doc of this.propertyDocs) clearProperties(doc);
     });
+    this.app.workspace.onLayoutReady(() => this.schedulePropertyChips());
     this.registerMarkdownPostProcessor(renderPlaceholders);
     this.registerEditorExtension(placeholderHighlighter);
     this.registerEvent(this.app.workspace.on("editor-paste", (evt, editor) => this.onPaste(evt, editor)));
