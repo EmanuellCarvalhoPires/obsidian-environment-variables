@@ -13,14 +13,13 @@ function propertyTrigger(before: string): { index: number; kind: string; query: 
   return empty ? { index: empty.index, kind: empty[1], query: "", closed: true } : null;
 }
 
-/** Autocompletes variable names after "{{secret:", "{{basic:" or "{{bearer:". Names only, never values. */
+/** Autocompletes variable names after "{{secret:", "{{basic:" or "{{bearer:". Names only, never values; works while locked. */
 export class SecretNameSuggest extends EditorSuggest<string> {
   constructor(private readonly plugin: EnvironmentVariablesPlugin) {
     super(plugin.app);
   }
 
   onTrigger(cursor: EditorPosition, editor: Editor, _file: TFile | null): EditorSuggestTriggerInfo | null {
-    if (!this.plugin.store.isUnlocked) return null;
     const before = editor.getLine(cursor.line).slice(0, cursor.ch);
     const match = TRIGGER.exec(before);
     if (!match) return null;
@@ -29,7 +28,7 @@ export class SecretNameSuggest extends EditorSuggest<string> {
 
   getSuggestions(context: EditorSuggestContext): string[] {
     const q = context.query.toLowerCase();
-    return this.plugin.store.names().filter((n) => n.toLowerCase().startsWith(q) || n.toLowerCase().includes(q));
+    return this.plugin.variableNames().map((e) => e.name).filter((n) => n.toLowerCase().includes(q));
   }
 
   renderSuggestion(name: string, el: HTMLElement): void {
@@ -60,12 +59,12 @@ class PropertySecretSuggest extends AbstractInputSuggest<string> {
   }
 
   protected getSuggestions(_query: string): string[] {
-    if (!propertySuggestActive || !this.plugin.store.isUnlocked) return [];
+    if (!propertySuggestActive) return [];
     // Read up to the caret: contenteditable text often ends with an invisible line break.
     const match = propertyTrigger(textBeforeCaret(this.field));
     if (!match) return [];
     const q = match.query.toLowerCase();
-    return this.plugin.store.names().filter((n) => n.toLowerCase().includes(q));
+    return this.plugin.variableNames().map((e) => e.name).filter((n) => n.toLowerCase().includes(q));
   }
 
   renderSuggestion(name: string, el: HTMLElement): void {

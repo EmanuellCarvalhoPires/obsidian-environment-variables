@@ -3,6 +3,7 @@ import { ApprovalRequest } from "../engine/broker";
 import { isValidPattern, parsePattern, wildcardRisk } from "../engine/hosts";
 import { ClientAccess } from "../server/clients";
 import { t } from "../i18n";
+import { NameEntry } from "../settings";
 import { SecretInput, SecretStore } from "../store/secretStore";
 import { ApprovalPolicy, SecretRecord, SecretType } from "../store/types";
 
@@ -366,30 +367,29 @@ export class ClientTokenModal extends Modal {
   }
 }
 
-export class SecretPickerModal extends SuggestModal<string> {
+/** Picks a variable by name. Works while the vault is locked: it only needs names and types. */
+export class SecretPickerModal extends SuggestModal<NameEntry> {
   constructor(
     app: App,
-    private readonly store: SecretStore,
-    private readonly onPick: (secret: SecretRecord) => void,
+    private readonly entries: () => NameEntry[],
+    private readonly onPick: (entry: NameEntry) => void,
   ) {
     super(app);
     this.setPlaceholder(t("modal.pick.placeholder"));
   }
 
-  getSuggestions(query: string): string[] {
+  getSuggestions(query: string): NameEntry[] {
     const q = query.toLowerCase();
-    return this.store.names().filter((n) => n.toLowerCase().includes(q));
+    return this.entries().filter((e) => e.name.toLowerCase().includes(q));
   }
 
-  renderSuggestion(name: string, el: HTMLElement): void {
-    const secret = this.store.get(name);
-    el.createDiv({ text: name });
-    if (secret) el.createEl("small", { text: `${t(`type.${secret.type}`)} · ${hostsLabel(secret)}`, cls: "ev-muted" });
+  renderSuggestion(entry: NameEntry, el: HTMLElement): void {
+    el.createDiv({ text: entry.name });
+    el.createEl("small", { text: t(`type.${entry.type}`), cls: "ev-muted" });
   }
 
-  onChooseSuggestion(name: string): void {
-    const secret = this.store.get(name);
-    if (secret) this.onPick(secret);
+  onChooseSuggestion(entry: NameEntry): void {
+    this.onPick(entry);
   }
 }
 

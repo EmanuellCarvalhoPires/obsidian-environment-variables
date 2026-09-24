@@ -40,6 +40,7 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
           { name: t("settings.autoLock"), desc: t("settings.autoLockDesc"), control: numberControl("autoLockMinutes") },
           { name: t("settings.approvalTimeout"), control: numberControl("approvalTimeoutSeconds") },
           { name: t("settings.warnPaste"), desc: t("settings.warnPasteDesc"), control: { type: "toggle", key: "warnOnTokenPaste" } },
+          { name: t("settings.namesLocked"), desc: t("settings.namesLockedDesc"), control: { type: "toggle", key: "showNamesWhileLocked" } },
           { name: t("settings.changePassword"), render: (setting) => this.renderPasswordChange(setting) },
         ],
       },
@@ -69,6 +70,11 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
       await this.plugin.setServerEnabled(value === true);
     } else if (isBooleanKey(key)) {
       s[key] = value === true;
+      if (key === "showNamesWhileLocked") {
+        // Off: forget the names now. On: rebuild them if the vault is unlocked.
+        if (!s.showNamesWhileLocked) this.plugin.data.nameIndex = [];
+        this.plugin.syncNameIndex();
+      }
       await this.plugin.saveAll();
     } else if (isNumberKey(key) && typeof value === "number") {
       s[key] = value;
@@ -135,5 +141,5 @@ function isNumberKey(key: string): key is NumberKey {
 }
 
 function isBooleanKey(key: string): key is BooleanKey {
-  return key === "serverEnabled" || key === "warnOnTokenPaste";
+  return key === "serverEnabled" || key === "warnOnTokenPaste" || key === "showNamesWhileLocked";
 }
