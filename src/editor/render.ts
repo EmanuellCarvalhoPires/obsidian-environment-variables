@@ -2,8 +2,9 @@ import { RangeSetBuilder } from "@codemirror/state";
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { MarkdownPostProcessorContext } from "obsidian";
 import { placeholderRegex } from "../engine/placeholders";
+import { buildChip } from "./chip";
 
-/** Reading view: shows {{secret:NAME}} as a "🔒 NAME" chip. */
+/** Reading view: shows {{secret:NAME}} as a chip with a lock icon and the name. */
 export function renderPlaceholders(el: HTMLElement, _ctx: MarkdownPostProcessorContext): void {
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   const targets: Text[] = [];
@@ -18,9 +19,7 @@ export function renderPlaceholders(el: HTMLElement, _ctx: MarkdownPostProcessorC
     for (const m of node.data.matchAll(placeholderRegex())) {
       const index = m.index ?? 0;
       frag.append(node.data.slice(last, index));
-      const chip = createSpan({ cls: "ev-chip", attr: { "aria-label": m[0], "data-kind": m[1] } });
-      chip.setText(`🔒 ${m[2]}${m[3] ? "." + m[3] : ""}`);
-      frag.append(chip);
+      buildChip(frag, { raw: m[0], kind: m[1], name: m[2], field: m[3] });
       last = index + m[0].length;
     }
     frag.append(node.data.slice(last));

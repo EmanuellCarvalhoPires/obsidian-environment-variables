@@ -4,7 +4,8 @@ import { Broker } from "./engine/broker";
 import { detectToken } from "./engine/tokenPatterns";
 import { nodeTransport } from "./engine/transport";
 import { placeholderHighlighter, renderPlaceholders } from "./editor/render";
-import { SecretNameSuggest } from "./editor/suggest";
+import { attachPropertySuggest, SecretNameSuggest, setPropertySuggestActive } from "./editor/suggest";
+import { clearProperties, decorateProperties } from "./editor/properties";
 import { t } from "./i18n";
 import { IntegrationId, integrationById } from "./integrations/integrations";
 import { accessOf, ClientAccess, ClientRecord, contextOf, createClient, findClient } from "./server/clients";
@@ -26,6 +27,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   private lastActivity = Date.now();
   private serverListeners = new Set<() => void>();
   private saveTimer: number | undefined;
+  private propertyTimer: number | undefined;
+  private propertyDocs = new Set<Document>();
 
   get vaultFilePath(): string {
     return `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/vault.enc`;
@@ -91,6 +94,26 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
     this.addSettingTab(new EnvironmentVariablesSettingTab(this.app, this));
     this.registerEditorSuggest(new SecretNameSuggest(this));
+    // Properties panel: attach the same autocomplete to a value field when it gets focus.
+    setPropertySuggestActive(true);
+    this.register(() => setPropertySuggestActive(false));
+    const watchDocument = (doc: Document) => {
+      this.propertyDocs.add(doc);
+      this.registerDomEvent(doc, "focusin", (evt) => attachPropertySuggest(this, evt.target));
+      // After editing, show the chip again once Obsidian has saved the value.
+      this.registerDomEvent(doc, "focusout", () => this.schedulePropertyChips());
+    };
+    watchDocument(activeDocument);
+    this.registerEvent(this.app.workspace.on("window-open", (win) => watchDocument(win.doc)));
+    this.registerEvent(this.app.workspace.on("window-close", (win) => this.propertyDocs.delete(win.doc)));
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.schedulePropertyChips()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.schedulePropertyChips()));
+    this.registerEvent(this.app.metadataCache.on("changed", () => this.schedulePropertyChips()));
+    this.register(this.store.onChange(() => this.schedulePropertyChips()));
+    this.register(() => {
+      if (this.propertyTimer !== undefined) window.clearTimeout(this.propertyTimer);
+      for (const doc of this.propertyDocs) clearProperties(doc);
+    });
     this.registerMarkdownPostProcessor(renderPlaceholders);
     this.registerEditorExtension(placeholderHighlighter);
     this.registerEvent(this.app.workspace.on("editor-paste", (evt, editor) => this.onPaste(evt, editor)));
@@ -129,6 +152,17 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     setIconSafe(this.ribbon, unlocked ? ICON_UNLOCKED : ICON_LOCKED, unlocked ? "key" : "lock");
     this.ribbon.setAttribute("aria-label", unlocked ? t("ribbon.unlocked") : t("ribbon.locked"));
     this.ribbon.toggleClass("is-unlocked", unlocked);
+  }
+
+  // ---------- properties ----------
+
+  private schedulePropertyChips(): void {
+    if (this.propertyTimer !== undefined) window.clearTimeout(this.propertyTimer);
+    this.propertyTimer = window.setTimeout(() => {
+      this.propertyTimer = undefined;
+      const known = () => (this.store.isUnlocked ? new Set(this.store.names()) : null);
+      for (const doc of this.propertyDocs) decorateProperties(doc, known);
+    }, 150);
   }
 
   // ---------- pasted tokens ----------
