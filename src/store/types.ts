@@ -23,6 +23,11 @@ export interface SecretRecord {
   description: string;
   /** Host patterns where this secret may be sent, e.g. "acme.atlassian.net" or "*.atlassian.net". */
   allowedHosts: string[];
+  /**
+   * Allow any https host (allowedHosts is then ignored). Every request with this secret
+   * needs approval and never follows a redirect to another origin. Off when missing.
+   */
+  allowAnyHost?: boolean;
   /** Allow plain http:// to localhost/127.0.0.1 (for local services). */
   allowHttpLocalhost: boolean;
   placement: SecretPlacement;

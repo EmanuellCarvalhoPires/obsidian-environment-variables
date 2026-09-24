@@ -122,7 +122,10 @@ export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit
   const body = input.body === undefined ? undefined : resolveIn(input.body, "body", url);
 
   const usedSecrets = [...used.values()];
-  const needsApproval = usedSecrets.some((s) => s.approval === "always" || (s.approval === "writes" && !READ_METHODS.has(method)));
+  // A secret without a host list can be sent anywhere, so the user checks every destination.
+  const needsApproval = usedSecrets.some(
+    (s) => s.allowAnyHost === true || s.approval === "always" || (s.approval === "writes" && !READ_METHODS.has(method)),
+  );
   const origin = url.origin;
 
   return {
@@ -140,6 +143,8 @@ export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit
       // A secret in the URL or in a body that 307/308 would re-send must never change origin.
       const bodyResent = status === 307 || status === 308;
       if (!sameOrigin && (placements.url || (placements.body && bodyResent))) return "stop";
+      // The user approved one origin; a redirect must not take an any-host secret elsewhere.
+      if (!sameOrigin && usedSecrets.some((s) => s.allowAnyHost === true)) return "stop";
       // Every secret must be allowed at the new destination (host, port, path prefix, scheme).
       for (const s of usedSecrets) {
         if (!destinationAllowed(s, next)) return "stop";
@@ -187,18 +192,19 @@ function checkPlacement(secret: SecretRecord, where: "url" | "header" | "body"):
 
 /** Scheme + host + port + path-prefix check, without throwing. */
 export function destinationAllowed(secret: SecretRecord, url: URL): boolean {
-  if (secret.allowedHosts.length === 0) return false;
   if (url.protocol === "http:") {
     if (!(secret.allowHttpLocalhost && isLocalhost(url))) return false;
   } else if (url.protocol !== "https:") {
     return false;
   }
+  if (secret.allowAnyHost === true) return true;
+  if (secret.allowedHosts.length === 0) return false;
   return urlAllowed(url, secret.allowedHosts);
 }
 
 /** `display` is the pre-substitution target, so error messages never contain a value. */
 function checkDestination(secret: SecretRecord, url: URL, display: string): void {
-  if (secret.allowedHosts.length === 0) {
+  if (secret.allowedHosts.length === 0 && secret.allowAnyHost !== true) {
     throw new PolicyError("host_not_allowed", `${secret.name} has no allowed hosts configured.`);
   }
   if (url.protocol === "http:" && !(secret.allowHttpLocalhost && isLocalhost(url))) {

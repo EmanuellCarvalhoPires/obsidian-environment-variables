@@ -237,3 +237,39 @@ describe("vault file versions", () => {
     await expect(decryptVault(JSON.stringify(file), PASSWORD)).rejects.toBeInstanceOf(UnsupportedKdfError);
   });
 });
+
+// ---------- any host ----------
+
+describe("allowAnyHost", () => {
+  const any = () => record({ allowedHosts: [], allowAnyHost: true, approval: "never" });
+
+  it("keeps refusing a secret without hosts when the option is off", () => {
+    expect(code(() => prepareRequest({ url: "https://api.example.com/", headers: H }, lookupOf(record({ allowedHosts: [] }))))).toBe("host_not_allowed");
+  });
+
+  it("allows any https host but always needs approval, even for GET", () => {
+    const p = prepareRequest({ url: "https://anything.example.org/x", headers: H }, lookupOf(any()));
+    expect(p.usedSecrets).toHaveLength(1);
+    expect(p.needsApproval).toBe(true);
+  });
+
+  it("still refuses plain http and other schemes", () => {
+    expect(code(() => prepareRequest({ url: "http://anything.example.org/", headers: H }, lookupOf(any())))).toBe("insecure_scheme");
+    expect(code(() => prepareRequest({ url: "ftp://anything.example.org/", headers: H }, lookupOf(any())))).toBe("insecure_scheme");
+  });
+
+  it("still applies the placement rules", () => {
+    expect(code(() => prepareRequest({ url: "https://a.example.org/?t={{secret:JIRA_ACME}}" }, lookupOf(any())))).toBe("placement_not_allowed");
+  });
+
+  it("never follows a redirect to another origin", () => {
+    const p = prepareRequest({ url: "https://a.example.org/x", headers: H }, lookupOf(any()));
+    expect(p.redirectDecision(new URL("https://a.example.org/y"), 302)).toBe("follow");
+    expect(p.redirectDecision(new URL("https://evil.com/y"), 302)).toBe("stop");
+  });
+
+  it("ignores the host list while the option is on", () => {
+    const s = record({ allowedHosts: ["acme.atlassian.net"], allowAnyHost: true });
+    expect(prepareRequest({ url: "https://other.example.org/", headers: H }, lookupOf(s)).needsApproval).toBe(true);
+  });
+});
