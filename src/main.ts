@@ -10,7 +10,7 @@ import { t } from "./i18n";
 import { IntegrationId, integrationById } from "./integrations/integrations";
 import { accessOf, ClientAccess, ClientRecord, contextOf, createClient, findClient } from "./server/clients";
 import { LocalServer } from "./server/localServer";
-import { PluginData, withDefaults } from "./settings";
+import { NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
 import { ApprovalModal, referenceFor, SecretModal, SecretPickerModal } from "./ui/modals";
 import { EnvironmentVariablesSettingTab } from "./ui/settingsTab";
@@ -67,6 +67,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.ribbon = this.addRibbonIcon(ICON_LOCKED, t("ribbon.locked"), () => void this.activateView());
     this.ribbon.addClass("ev-ribbon");
     this.register(this.store.onChange(() => this.updateRibbon()));
+    this.register(this.store.onChange(() => this.syncNameIndex()));
     this.updateRibbon();
 
     this.addCommand({ id: "open-panel", name: t("cmd.open"), callback: () => void this.activateView() });
@@ -75,8 +76,11 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       id: "insert-reference",
       name: t("cmd.insert"),
       editorCallback: (editor: Editor) => {
-        if (!this.requireUnlocked()) return;
-        new SecretPickerModal(this.app, this.store, (secret) => editor.replaceSelection(referenceFor(secret))).open();
+        // A reference holds no value, so it can be inserted while the vault is locked.
+        if (this.variableNames().length === 0) {
+          if (!this.requireUnlocked()) return;
+        }
+        new SecretPickerModal(this.app, () => this.variableNames(), (entry) => editor.replaceSelection(referenceFor(entry))).open();
       },
     });
     this.addCommand({
@@ -164,9 +168,27 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     if (this.propertyTimer !== undefined) window.clearTimeout(this.propertyTimer);
     this.propertyTimer = window.setTimeout(() => {
       this.propertyTimer = undefined;
-      const known = () => (this.store.isUnlocked ? new Set(this.store.names()) : null);
+      const known = () =>
+        this.store.isUnlocked || this.data.settings.showNamesWhileLocked ? new Set(this.variableNames().map((e) => e.name)) : null;
       for (const doc of this.propertyDocs) decorateProperties(doc, known);
     }, 150);
+  }
+
+  // ---------- variable names ----------
+
+  /** Names and types for writing references: from the vault when unlocked, else from the index. */
+  variableNames(): NameEntry[] {
+    if (this.store.isUnlocked) return this.store.list().map((s) => ({ name: s.name, type: s.type }));
+    return this.data.settings.showNamesWhileLocked ? this.data.nameIndex : [];
+  }
+
+  /** Keeps the name index in data.json in step with the vault. Runs only while unlocked. */
+  syncNameIndex(): void {
+    if (!this.store.isUnlocked) return;
+    const next = this.data.settings.showNamesWhileLocked ? this.store.list().map((s) => ({ name: s.name, type: s.type })) : [];
+    if (JSON.stringify(next) === JSON.stringify(this.data.nameIndex)) return;
+    this.data.nameIndex = next;
+    this.scheduleSave();
   }
 
   // ---------- pasted tokens ----------

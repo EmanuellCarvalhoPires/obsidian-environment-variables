@@ -18,7 +18,7 @@ Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (C
 1. Click the key icon in the left ribbon to open the **Environment Variables** panel.
 2. Create a master password. Your variables are encrypted with it.
 3. Add a variable: a name (`JIRA_ACME`), a type, the value and the **allowed hosts** (`acme.atlassian.net`).
-4. In your notes, write `{{basic:JIRA_ACME}}` instead of the token. Type `{{secret:` to autocomplete names, in the note text or in a property value. Keys are shown as a lock chip in reading view and in the Properties panel; click a chip in Properties to edit it. A chip turns red when the name does not exist in the unlocked vault.
+4. In your notes, write `{{basic:JIRA_ACME}}` instead of the token. Type `{{secret:` to autocomplete names, in the note text or in a property value, even while the vault is locked. Keys are shown as a lock chip in reading view and in the Properties panel; click a chip in Properties to edit it. A chip turns red when the name does not exist in the unlocked vault.
 5. In **AI clients**, click **Connect** next to your AI tool. The plugin turns on the local server and registers itself in the tool. There is nothing to copy or paste.
 
 Already have tokens in your notes? Select one and run **Convert selection into a variable**. When you paste something that looks like a token (Atlassian, GitHub, GitLab, OpenAI, Anthropic, AWS, Google, Slack, Stripe or a JWT) into a note, the plugin offers to store it encrypted and put a key in its place. You can turn this warning off in the settings.
@@ -96,7 +96,7 @@ curl -s http://127.0.0.1:27150/v1/request \
 ## Disclosures
 
 - **Network use:** the plugin runs a local HTTP server on `127.0.0.1` (port 27150 by default) when you turn it on, and sends HTTP requests only to the hosts you configure for each variable, when an authorized client asks it to. It does not contact any other service.
-- **Files:** the encrypted variables are stored in `<vault>/.obsidian/plugins/environment-variables/vault.enc`. Settings, client token hashes and the usage log are stored in the plugin's `data.json`, which contains no values.
+- **Files:** the encrypted variables are stored in `<vault>/.obsidian/plugins/environment-variables/vault.enc`. Settings, client token hashes and the usage log are stored in the plugin's `data.json`, which contains no values. By default it also keeps the **names and types** of your variables (never the values), so you can insert references while the vault is locked; turn off **Show variable names while locked** to keep names inside the encrypted file only.
 - **Outside the vault, only when you click Connect or Disconnect for an AI tool:**
   - **Claude Code:** the plugin looks for the `claude` program in its usual install locations and runs `claude mcp add` / `claude mcp remove`. Claude Code then updates its own configuration.
   - **Codex:** the plugin reads and updates `~/.codex/config.toml`. It only adds or removes its own block, between `# >>> environment-variables` and `# <<< environment-variables` markers, and refuses to write if you already added that server by hand.
