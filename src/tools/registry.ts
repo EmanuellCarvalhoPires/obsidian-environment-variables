@@ -6,7 +6,7 @@ import { hasTag, NoteSource, ServiceChoice, ToolEntry, ToolStatus, VaultNote } f
 
 /**
  * The value the AI passes for each instance note. The part of the names that every note shares
- * is dropped when it ends at a separator: "Acesso Jira - A5X", "Acesso Jira - Telecall" → "A5X", "Telecall".
+ * is dropped when it ends at a separator: "Jira - Acme", "Jira - Globex" → "Acme", "Globex".
  */
 export function serviceChoices(notes: VaultNote[]): ServiceChoice[] {
   const sorted = [...notes].sort((a, b) => a.name.localeCompare(b.name));
@@ -18,7 +18,7 @@ export function serviceChoices(notes: VaultNote[]): ServiceChoice[] {
       while (i < p.length && i < n.length && p[i] === n[i]) i++;
       return p.slice(0, i);
     });
-    // Cut after the last separator, so "Acesso Jira - A" (from A5X and Assets) becomes "Acesso Jira - ".
+    // Cut after the last separator, so "Jira - A" (from Acme and Assets) becomes "Jira - ".
     const cut = Math.max(prefix.lastIndexOf(" "), prefix.lastIndexOf("-"), prefix.lastIndexOf("_"));
     prefix = cut >= 0 ? prefix.slice(0, cut + 1) : "";
   }

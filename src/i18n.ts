@@ -59,10 +59,17 @@ const en = {
   "view.clients.none": "No clients yet.",
   "view.clients.revoke": "Revoke",
   "view.clients.revokeConfirm": "Revoke the token of {name}? It will stop working immediately.",
-  "view.log.title": "Usage log",
   "view.log.empty": "Nothing logged yet.",
   "view.log.clear": "Clear log",
-  "view.connect.body": "One click registers this plugin in your AI tool. There is no token to copy and the local server is turned on for you.",
+  "view.log.show": "Log entries ({n})",
+  "view.log.col.time": "Time",
+  "view.log.col.client": "Client",
+  "view.log.col.action": "Action",
+  "view.log.col.variables": "Variables",
+  "view.log.col.result": "Result",
+  "view.section.env": "Environment Variables",
+  "view.section.mcp": "Local MCP settings",
+  "view.section.logs": "Logs",
   "view.connect.connect": "Connect",
   "view.connect.reconnect": "Reconnect",
   "view.connect.disconnect": "Disconnect",
@@ -147,7 +154,6 @@ const en = {
   "settings.serverEnabled": "Enable local server",
   "settings.serverEnabledDesc": "Listens only on 127.0.0.1. AI clients use it through MCP (/mcp) or REST (/v1/request).",
   "settings.port": "Port",
-  "settings.security": "Security",
   "settings.autoLock": "Auto-lock after (minutes)",
   "settings.autoLockDesc": "Lock the vault after this many minutes without use. 0 (the default) keeps it unlocked until you click Lock now or close Obsidian.",
   "settings.approvalTimeout": "Approval timeout (seconds)",
@@ -156,10 +162,8 @@ const en = {
   "settings.current": "Current password",
   "settings.newPassword": "New password",
   "settings.passwordChanged": "Master password changed.",
-  "settings.limits": "Request limits",
   "settings.timeout": "Request timeout (seconds)",
   "settings.maxResponse": "Maximum response size (MB)",
-  "settings.storage": "Storage",
   "settings.storageDesc": "Variables are stored encrypted (AES-256-GCM) in {path}. The file is useless without the master password.",
   "settings.format": "File format: {format}",
   "settings.storageFile": "Encrypted file",
@@ -176,7 +180,12 @@ const en = {
   "cmd.copyGuideSingle": "Copy the AI agent prompt: add one tool",
   "cmd.copyGuideMultiple": "Copy the AI agent prompt: add several tools",
   "notice.guideCopied": "Prompt for AI agents copied. Paste it into your AI tool, followed by what you want to build.",
-  "settings.tools": "Vault tools",
+  "settings.toolsGroup": "Local MCP settings: vault tools",
+  "settings.languageGroup": "Language",
+  "settings.language": "Language",
+  "settings.languageDesc": "Language of the panel, settings, dialogs and AI agent prompts. Command names change after Obsidian restarts.",
+  "settings.languageAuto": "Automatic (Obsidian's language)",
+  "settings.logCount": "{n} entries in the log. Values are never logged.",
   "settings.toolsEnabled": "Enable vault tools",
   "settings.toolsEnabledDesc": "Publishes notes tagged as tools as MCP tools, together with the tools an AI agent uses to create them (get_tool_authoring_guide, list_vault_tools, run_vault_tool).",
   "settings.scriptsEnabled": "Enable script tools",
@@ -188,10 +197,7 @@ const en = {
   "settings.scriptTimeout": "Script time limit (seconds)",
   "settings.tagInvalid": "Use letters, digits, -, _ and / only, without spaces or #.",
   "view.tools.title": "Vault tools",
-  "view.tools.off": "Vault tools are off. Check the box above to publish notes as MCP tools and to let an AI agent create tools for you.",
-  "view.tools.summary": "{n} tool notes · script tools {scripts}",
-  "view.tools.on": "on",
-  "view.tools.off2": "off",
+  "view.tools.off": "Vault tools are off. Turn on the option above to publish notes as MCP tools and to let an AI agent create tools for you.",
   "view.tools.guideTitle": "Prompts for AI agents",
   "view.tools.guideBody": "Generic prompts, the same on any computer: they name no vault, folder, tag or tool of yours. Copy one into Claude Code or another AI agent. The agent finds out the rest with the plugin's tools, asks what is missing (at the end, which environment variables and for which app or service) and waits for your approval before creating notes. Connected clients also get them through the configure_vault_tools, add_vault_tool and add_vault_tools prompts and the get_tool_authoring_guide tool.",
   "view.tools.prompt.setup": "Set up the MCP environment",
@@ -201,6 +207,7 @@ const en = {
   "view.tools.prompt.multiple": "Add several tools",
   "view.tools.prompt.multipleDesc": "Several tools at once, sharing service and request notes. Full plan. At the end it asks which tools, for which app or service and with which environment variables.",
   "view.tools.copyGuide": "Copy prompt",
+  "view.tools.copy": "Copy",
   "view.tools.showGuide": "Show prompt",
   "view.tools.hideGuide": "Hide prompt",
   "view.tools.listTitle": "Tools",
@@ -288,10 +295,17 @@ const ptBR: Partial<Record<Key, string>> = {
   "view.clients.none": "Nenhum cliente ainda.",
   "view.clients.revoke": "Revogar",
   "view.clients.revokeConfirm": "Revogar o token de {name}? Ele para de funcionar na hora.",
-  "view.log.title": "Log de uso",
   "view.log.empty": "Nada registrado ainda.",
   "view.log.clear": "Limpar log",
-  "view.connect.body": "Com um clique, o plugin é registrado na sua ferramenta de IA. Não há token para copiar, e o servidor local é ligado para você.",
+  "view.log.show": "Registros do log ({n})",
+  "view.log.col.time": "Horário",
+  "view.log.col.client": "Cliente",
+  "view.log.col.action": "Ação",
+  "view.log.col.variables": "Variáveis",
+  "view.log.col.result": "Resultado",
+  "view.section.env": "Variáveis de ambiente",
+  "view.section.mcp": "Configurações do MCP local",
+  "view.section.logs": "Logs",
   "view.connect.connect": "Conectar",
   "view.connect.reconnect": "Reconectar",
   "view.connect.disconnect": "Desconectar",
@@ -376,7 +390,6 @@ const ptBR: Partial<Record<Key, string>> = {
   "settings.serverEnabled": "Ligar servidor local",
   "settings.serverEnabledDesc": "Escuta só em 127.0.0.1. Os clientes de IA usam por MCP (/mcp) ou REST (/v1/request).",
   "settings.port": "Porta",
-  "settings.security": "Segurança",
   "settings.autoLock": "Bloquear depois de (minutos)",
   "settings.autoLockDesc": "Bloqueia o cofre depois desse tempo sem uso. Com 0 (o padrão), o cofre fica aberto até você clicar em Bloquear agora ou fechar o Obsidian.",
   "settings.approvalTimeout": "Tempo para aprovar (segundos)",
@@ -385,10 +398,8 @@ const ptBR: Partial<Record<Key, string>> = {
   "settings.current": "Senha atual",
   "settings.newPassword": "Nova senha",
   "settings.passwordChanged": "Senha mestra trocada.",
-  "settings.limits": "Limites das requisições",
   "settings.timeout": "Tempo máximo da requisição (segundos)",
   "settings.maxResponse": "Tamanho máximo da resposta (MB)",
-  "settings.storage": "Armazenamento",
   "settings.storageDesc": "As variáveis ficam criptografadas (AES-256-GCM) em {path}. O arquivo é inútil sem a senha mestra.",
   "settings.format": "Formato do arquivo: {format}",
   "settings.storageFile": "Arquivo criptografado",
@@ -405,7 +416,12 @@ const ptBR: Partial<Record<Key, string>> = {
   "cmd.copyGuideSingle": "Copiar o prompt para agentes de IA: adicionar uma ferramenta",
   "cmd.copyGuideMultiple": "Copiar o prompt para agentes de IA: adicionar várias ferramentas",
   "notice.guideCopied": "Prompt para agentes de IA copiado. Cole na sua ferramenta de IA e escreva em seguida o que você quer criar.",
-  "settings.tools": "Ferramentas do cofre",
+  "settings.toolsGroup": "Configurações do MCP local: ferramentas do cofre",
+  "settings.languageGroup": "Idioma",
+  "settings.language": "Idioma",
+  "settings.languageDesc": "Idioma do painel, das configurações, das janelas e dos prompts para agentes de IA. Os nomes dos comandos mudam depois de reiniciar o Obsidian.",
+  "settings.languageAuto": "Automático (idioma do Obsidian)",
+  "settings.logCount": "{n} registros no log. Os valores nunca são registrados.",
   "settings.toolsEnabled": "Ligar ferramentas do cofre",
   "settings.toolsEnabledDesc": "Publica as notas marcadas como ferramenta como ferramentas MCP, junto com as ferramentas que um agente de IA usa para criá-las (get_tool_authoring_guide, list_vault_tools, run_vault_tool).",
   "settings.scriptsEnabled": "Ligar ferramentas com script",
@@ -417,10 +433,7 @@ const ptBR: Partial<Record<Key, string>> = {
   "settings.scriptTimeout": "Tempo máximo dos scripts (segundos)",
   "settings.tagInvalid": "Use só letras, dígitos, -, _ e /, sem espaços nem #.",
   "view.tools.title": "Ferramentas do cofre",
-  "view.tools.off": "As ferramentas do cofre estão desligadas. Marque a caixa acima para publicar notas como ferramentas MCP e para deixar um agente de IA criar ferramentas para você.",
-  "view.tools.summary": "{n} notas de ferramenta · ferramentas com script {scripts}",
-  "view.tools.on": "ligadas",
-  "view.tools.off2": "desligadas",
+  "view.tools.off": "As ferramentas do cofre estão desligadas. Ligue a opção acima para publicar notas como ferramentas MCP e para deixar um agente de IA criar ferramentas para você.",
   "view.tools.guideTitle": "Prompts para agentes de IA",
   "view.tools.guideBody": "Prompts genéricos, iguais em qualquer computador: não citam nenhum cofre, pasta, tag ou ferramenta sua. Copie um no Claude Code ou em outro agente de IA. O agente descobre o resto com as ferramentas do plugin, pergunta o que faltar (no final, quais variáveis de ambiente e para qual app ou serviço) e espera a sua aprovação antes de criar notas. Clientes conectados também recebem os prompts configure_vault_tools, add_vault_tool e add_vault_tools e a ferramenta get_tool_authoring_guide.",
   "view.tools.prompt.setup": "Setar o ambiente MCP",
@@ -430,6 +443,7 @@ const ptBR: Partial<Record<Key, string>> = {
   "view.tools.prompt.multiple": "Adicionar várias ferramentas",
   "view.tools.prompt.multipleDesc": "Várias ferramentas de uma vez, compartilhando as notas de serviço e de requisição. Plano completo. No final, pergunta quais ferramentas, para qual app ou serviço e com quais variáveis de ambiente.",
   "view.tools.copyGuide": "Copiar prompt",
+  "view.tools.copy": "Copiar",
   "view.tools.showGuide": "Mostrar prompt",
   "view.tools.hideGuide": "Esconder prompt",
   "view.tools.listTitle": "Ferramentas",
@@ -457,9 +471,23 @@ const ptBR: Partial<Record<Key, string>> = {
   "strength.4": "Forte",
 };
 
+export type Language = "en" | "pt-BR";
+
+let chosen: "auto" | Language = "auto";
+
+/** Sets the plugin's language; "auto" follows Obsidian's language. */
+export function setLanguage(language: "auto" | Language): void {
+  chosen = language;
+}
+
+/** The language in use: the one chosen in the settings, or Obsidian's (Portuguese for any "pt" locale, English otherwise). */
+export function currentLanguage(): Language {
+  if (chosen !== "auto") return chosen;
+  return getLanguage().toLowerCase().startsWith("pt") ? "pt-BR" : "en";
+}
+
 export function t(key: Key, vars: Record<string, string | number> = {}): string {
-  const lang = getLanguage().toLowerCase();
-  const table = lang.startsWith("pt") ? ptBR : {};
+  const table = currentLanguage() === "pt-BR" ? ptBR : {};
   let text = table[key] ?? en[key];
   for (const [k, v] of Object.entries(vars)) text = text.split(`{${k}}`).join(String(v));
   return text;

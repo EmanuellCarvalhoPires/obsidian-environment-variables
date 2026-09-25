@@ -3,11 +3,11 @@ import { describeVault } from "../crypto/vaultFile";
 import { t } from "../i18n";
 import type EnvironmentVariablesPlugin from "../main";
 import { SERVER_NAME_PATTERN } from "../server/vaultIdentity";
-import { Settings } from "../settings";
+import { LanguageSetting, Settings } from "../settings";
 
 type NumberKey = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
 type BooleanKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
-type TextKey = { [K in keyof Settings]: Settings[K] extends string ? K : never }[keyof Settings];
+type TextKey = Exclude<{ [K in keyof Settings]: Settings[K] extends string ? K : never }[keyof Settings], "language">;
 
 const TAG_PATTERN = /^[\p{L}\p{N}_-]+(\/[\p{L}\p{N}_-]+)*$/u;
 
@@ -32,7 +32,33 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
     return [
       {
         type: "group",
-        heading: t("settings.server"),
+        heading: t("settings.languageGroup"),
+        items: [
+          {
+            name: t("settings.language"),
+            desc: t("settings.languageDesc"),
+            control: {
+              type: "dropdown",
+              key: "language",
+              options: { auto: t("settings.languageAuto"), en: "English", "pt-BR": "Português (Brasil)" },
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("view.section.env"),
+        items: [
+          { name: t("settings.autoLock"), desc: t("settings.autoLockDesc"), control: numberControl("autoLockMinutes") },
+          { name: t("settings.warnPaste"), desc: t("settings.warnPasteDesc"), control: { type: "toggle", key: "warnOnTokenPaste" } },
+          { name: t("settings.namesLocked"), desc: t("settings.namesLockedDesc"), control: { type: "toggle", key: "showNamesWhileLocked" } },
+          { name: t("settings.changePassword"), render: (setting) => this.renderPasswordChange(setting) },
+          { name: t("settings.storageFile"), render: (setting) => this.renderStorage(setting), searchable: false },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("view.section.mcp"),
         items: [
           { name: t("settings.serverEnabled"), desc: t("settings.serverEnabledDesc"), control: { type: "toggle", key: "serverEnabled" } },
           { name: t("settings.port"), desc: t("settings.portDesc"), control: numberControl("port") },
@@ -45,30 +71,14 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
               validate: (v: string) => (SERVER_NAME_PATTERN.test(v.trim()) ? undefined : t("settings.serverNameInvalid")),
             },
           },
-        ],
-      },
-      {
-        type: "group",
-        heading: t("settings.security"),
-        items: [
-          { name: t("settings.autoLock"), desc: t("settings.autoLockDesc"), control: numberControl("autoLockMinutes") },
           { name: t("settings.approvalTimeout"), control: numberControl("approvalTimeoutSeconds") },
-          { name: t("settings.warnPaste"), desc: t("settings.warnPasteDesc"), control: { type: "toggle", key: "warnOnTokenPaste" } },
-          { name: t("settings.namesLocked"), desc: t("settings.namesLockedDesc"), control: { type: "toggle", key: "showNamesWhileLocked" } },
-          { name: t("settings.changePassword"), render: (setting) => this.renderPasswordChange(setting) },
-        ],
-      },
-      {
-        type: "group",
-        heading: t("settings.limits"),
-        items: [
           { name: t("settings.timeout"), control: numberControl("timeoutSeconds") },
           { name: t("settings.maxResponse"), control: numberControl("maxResponseMB") },
         ],
       },
       {
         type: "group",
-        heading: t("settings.tools"),
+        heading: t("settings.toolsGroup"),
         items: [
           { name: t("settings.toolsEnabled"), desc: t("settings.toolsEnabledDesc"), control: { type: "toggle", key: "toolsEnabled" } },
           { name: t("settings.scriptsEnabled"), desc: t("settings.scriptsEnabledDesc"), control: { type: "toggle", key: "scriptsEnabled" } },
@@ -79,8 +89,8 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
-        heading: t("settings.storage"),
-        items: [{ name: t("settings.storageFile"), render: (setting) => this.renderStorage(setting), searchable: false }],
+        heading: t("view.section.logs"),
+        items: [{ name: t("view.log.clear"), render: (setting) => this.renderLogClear(setting), searchable: false }],
       },
     ];
   }
@@ -91,7 +101,10 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
 
   async setControlValue(key: string, value: unknown): Promise<void> {
     const s = this.plugin.data.settings;
-    if (key === "serverEnabled") {
+    if (key === "language" && isLanguage(value)) {
+      await this.plugin.setLanguageSetting(value);
+      this.update(); // redraw the settings in the new language
+    } else if (key === "serverEnabled") {
       await this.plugin.setServerEnabled(value === true);
     } else if (key === "mcpServerName" && typeof value === "string") {
       await this.plugin.setMcpServerName(value.trim());
@@ -148,6 +161,19 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
       );
   }
 
+  private renderLogClear(setting: Setting): void {
+    const count = () => this.plugin.audit.list().length;
+    setting
+      .setName(t("view.log.clear"))
+      .setDesc(t("settings.logCount", { n: count() }))
+      .addButton((b) =>
+        b.setButtonText(t("view.log.clear")).onClick(() => {
+          this.plugin.audit.clear();
+          setting.setDesc(t("settings.logCount", { n: count() }));
+        }),
+      );
+  }
+
   private renderStorage(setting: Setting): void {
     const path = this.plugin.vaultFilePath;
     setting.setName(t("settings.storageFile")).setDesc(t("settings.storageDesc", { path }));
@@ -177,6 +203,10 @@ function tagControl(key: TextKey, placeholder: string) {
     placeholder,
     validate: (v: string) => (TAG_PATTERN.test(v.trim().replace(/^#/, "")) ? undefined : t("settings.tagInvalid")),
   };
+}
+
+function isLanguage(value: unknown): value is LanguageSetting {
+  return value === "auto" || value === "en" || value === "pt-BR";
 }
 
 function isTextKey(key: string): key is TextKey {
