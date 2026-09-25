@@ -2,8 +2,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { afterAll, describe, expect, it } from "vitest";
+import { SERVER_NAME_PATTERN, serverNameFor, slugOf, vaultIdOf } from "../src/server/vaultIdentity";
 import {
   CODEX_BLOCK_START,
+  codexBlockToken,
   INTEGRATIONS,
   MCP_SERVER_NAME,
   registerWithClaude,
@@ -57,12 +59,12 @@ describe("Cursor integration", () => {
     process.env[homeVar] = fakeHome;
     try {
       expect(await cursor.detect()).toBe(true);
-      await cursor.connect(URL_, TOKEN);
+      await cursor.connect(URL_, TOKEN, MCP_SERVER_NAME);
       const after = JSON.parse(fs.readFileSync(file, "utf8"));
       expect(after.extra).toBe(1);
       expect(after.mcpServers.other).toEqual({ command: "x" });
       expect(after.mcpServers[MCP_SERVER_NAME]).toEqual({ url: URL_, headers: { Authorization: `Bearer ${TOKEN}` } });
-      await cursor.disconnect();
+      await cursor.disconnect(MCP_SERVER_NAME);
       const removed = JSON.parse(fs.readFileSync(file, "utf8"));
       expect(removed.mcpServers).toEqual({ other: { command: "x" } });
     } finally {
@@ -75,7 +77,7 @@ describe("Cursor integration", () => {
     fs.writeFileSync(file, "{ not json");
     process.env[homeVar] = fakeHome;
     try {
-      await expect(cursor.connect(URL_, TOKEN)).rejects.toThrow();
+      await expect(cursor.connect(URL_, TOKEN, MCP_SERVER_NAME)).rejects.toThrow();
       expect(fs.readFileSync(file, "utf8")).toBe("{ not json");
     } finally {
       process.env[homeVar] = originalHome;
@@ -121,14 +123,75 @@ describe("Codex integration (config.toml)", () => {
     process.env.CODEX_HOME = home;
     try {
       expect(await codex.detect()).toBe(true);
-      await codex.connect(URL_, TOKEN);
+      await codex.connect(URL_, TOKEN, MCP_SERVER_NAME);
       expect(fs.readFileSync(path.join(home, "config.toml"), "utf8")).toContain(TOKEN);
-      await codex.disconnect();
+      await codex.disconnect(MCP_SERVER_NAME);
       expect(fs.readFileSync(path.join(home, "config.toml"), "utf8").trimEnd()).toBe(existing.trimEnd());
     } finally {
       if (original === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = original;
     }
+  });
+});
+
+describe("one server name per vault", () => {
+  const A = "environment-variables-cofre";
+  const B = "environment-variables-teste-plugin";
+  const TOKEN_B = "evc_" + "cd".repeat(32);
+
+  it("keeps two vaults side by side in mcp.json and reads back each token", async () => {
+    const cursor = INTEGRATIONS.find((i) => i.id === "cursor")!;
+    const homeVar = process.platform === "win32" ? "USERPROFILE" : "HOME";
+    const originalHome = process.env[homeVar];
+    const home = path.join(tmp, "two-vaults");
+    fs.mkdirSync(path.join(home, ".cursor"), { recursive: true });
+    process.env[homeVar] = home;
+    try {
+      await cursor.connect("http://127.0.0.1:27150/mcp", TOKEN, A);
+      await cursor.connect("http://127.0.0.1:27151/mcp", TOKEN_B, B);
+      expect(await cursor.registeredToken(A)).toBe(TOKEN);
+      expect(await cursor.registeredToken(B)).toBe(TOKEN_B);
+      await cursor.disconnect(B);
+      expect(await cursor.registeredToken(A)).toBe(TOKEN);
+      expect(await cursor.registeredToken(B)).toBeNull();
+    } finally {
+      process.env[homeVar] = originalHome;
+    }
+  });
+
+  it("keeps one Codex block per vault and removes only the right one", () => {
+    const both = upsertCodexBlock(upsertCodexBlock("", "http://127.0.0.1:27150/mcp", TOKEN, A), "http://127.0.0.1:27151/mcp", TOKEN_B, B);
+    expect(codexBlockToken(both, A)).toBe(TOKEN);
+    expect(codexBlockToken(both, B)).toBe(TOKEN_B);
+    const onlyA = removeCodexBlock(both, B);
+    expect(codexBlockToken(onlyA, A)).toBe(TOKEN);
+    expect(onlyA).not.toContain(TOKEN_B);
+  });
+
+  it("reads the Claude Code entry from .claude.json without running claude", async () => {
+    const claude = INTEGRATIONS.find((i) => i.id === "claude-code")!;
+    const dir = path.join(tmp, "claude-config");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, ".claude.json"), JSON.stringify({ mcpServers: { [A]: { type: "http", url: URL_, headers: { Authorization: `Bearer ${TOKEN}` } } } }));
+    const original = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    try {
+      expect(await claude.registeredToken(A)).toBe(TOKEN);
+      expect(await claude.registeredToken(B)).toBeNull();
+    } finally {
+      if (original === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = original;
+    }
+  });
+
+  it("derives a valid, stable name from the vault", () => {
+    const id = vaultIdOf("C:\\Users\\x\\Documents\\Teste Plugin");
+    expect(id).toBe(vaultIdOf("c:/users/x/documents/teste plugin"));
+    expect(id).not.toBe(vaultIdOf("C:\\Users\\x\\Documents\\Cofre"));
+    expect(serverNameFor("Teste Plugin", id)).toBe(B);
+    expect(serverNameFor("Cofre Ação", id)).toBe("environment-variables-cofre-acao");
+    expect(slugOf("!!!", id)).toBe(id.slice(0, 8));
+    for (const n of [serverNameFor("Teste Plugin", id), serverNameFor("日本", id), MCP_SERVER_NAME]) expect(SERVER_NAME_PATTERN.test(n)).toBe(true);
   });
 });
 
@@ -144,11 +207,11 @@ describe("Antigravity integration", () => {
     process.env[homeVar] = home;
     try {
       expect(await antigravity.detect()).toBe(true);
-      await antigravity.connect(URL_, TOKEN);
+      await antigravity.connect(URL_, TOKEN, MCP_SERVER_NAME);
       const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
       expect(cfg.mcpServers[MCP_SERVER_NAME]).toEqual({ serverUrl: URL_, headers: { Authorization: `Bearer ${TOKEN}` } });
       expect(cfg.mcpServers["atlassian-mcp-server"]).toEqual({ command: "npx", args: ["a"] });
-      await antigravity.disconnect();
+      await antigravity.disconnect(MCP_SERVER_NAME);
       expect(Object.keys(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers)).toEqual(["atlassian-mcp-server"]);
     } finally {
       process.env[homeVar] = originalHome;

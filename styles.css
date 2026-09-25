@@ -361,3 +361,71 @@
 .ev-prop-hidden {
   display: none !important;
 }
+
+/* ---------- vault tools ---------- */
+
+.ev-tool-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--size-4-2);
+}
+
+.ev-tool-guide,
+.ev-tool-code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 24em;
+  overflow: auto;
+  font-size: var(--font-ui-smaller);
+  padding: var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  user-select: text;
+}
+
+.ev-tool .ev-item-top {
+  flex-wrap: wrap;
+  padding-right: 0;
+}
+
+.ev-tool .ev-actions {
+  position: static;
+  margin-left: auto;
+}
+
+.ev-status-ready {
+  color: var(--text-success);
+}
+
+.ev-status-needs-approval,
+.ev-status-scripts-disabled {
+  color: var(--text-warning);
+}
+
+.ev-status-invalid {
+  color: var(--text-error);
+}
+
+.ev-tool-modal {
+  max-width: 100%;
+}
+
+.ev-tool-switches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+  margin: var(--size-4-2) 0;
+}
+
+.ev-tool-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  cursor: pointer;
+}
+
+.ev-tool-switch.is-disabled {
+  color: var(--text-faint);
+  cursor: default;
+}

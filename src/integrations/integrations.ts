@@ -1,12 +1,16 @@
 // One-click connection of AI clients to the local MCP server.
 // Runs only when the user clicks "Connect". The client token goes straight
 // from the plugin into the client's configuration and is never shown.
+//
+// Each vault registers its server under its own name (see server/vaultIdentity.ts), so two vaults
+// open at the same time never overwrite each other's registration.
 
 import { execFile } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
+/** Name used by vaults connected before 1.3.0. New vaults use a name of their own. */
 export const MCP_SERVER_NAME = "environment-variables";
 
 export type IntegrationId = "claude-code" | "codex" | "antigravity" | "cursor";
@@ -16,8 +20,14 @@ export interface Integration {
   label: string;
   /** True when the client seems to be installed on this computer. */
   detect(): Promise<boolean>;
-  connect(url: string, token: string): Promise<void>;
-  disconnect(): Promise<void>;
+  /** Registers the server under `name`, the MCP server name of this vault. */
+  connect(url: string, token: string, name: string): Promise<void>;
+  disconnect(name: string): Promise<void>;
+  /**
+   * The bearer token registered under `name`, or null when there is none or it cannot be read.
+   * Read-only. Lets a vault check that a registration is its own before reusing the name.
+   */
+  registeredToken(name: string): Promise<string | null>;
 }
 
 // ---------- helpers ----------
@@ -63,6 +73,23 @@ function scrub(text: string, token: string): string {
   return text.split(token).join("***").trim();
 }
 
+/** "Bearer evc_..." → "evc_...". */
+export function bearerOf(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const m = /^Bearer\s+(\S+)$/i.exec(value.trim());
+  return m ? m[1] : null;
+}
+
+/** Token of the `mcpServers[name]` entry of a JSON config file, or null. */
+function tokenInJson(file: string, name: string): string | null {
+  try {
+    const servers = (readJsonObject(file).mcpServers ?? {}) as Record<string, { headers?: Record<string, unknown> } | undefined>;
+    return bearerOf(servers[name]?.headers?.Authorization);
+  } catch {
+    return null;
+  }
+}
+
 // ---------- Claude Code (CLI) ----------
 
 let cachedClaude: string | null | undefined;
@@ -99,22 +126,17 @@ export async function findClaude(): Promise<string | null> {
 }
 
 /** Registers the MCP server in Claude Code at user scope (all projects). Exported for tests. */
-export async function registerWithClaude(claude: string, url: string, token: string): Promise<void> {
+export async function registerWithClaude(claude: string, url: string, token: string, name = MCP_SERVER_NAME): Promise<void> {
   // Replace any previous registration so the new token takes effect.
-  await run(claude, ["mcp", "remove", MCP_SERVER_NAME, "--scope", "user"]);
-  const res = await run(claude, [
-    "mcp",
-    "add",
-    "--transport",
-    "http",
-    "--scope",
-    "user",
-    MCP_SERVER_NAME,
-    url,
-    "--header",
-    `Authorization: Bearer ${token}`,
-  ]);
+  await run(claude, ["mcp", "remove", name, "--scope", "user"]);
+  const res = await run(claude, ["mcp", "add", "--transport", "http", "--scope", "user", name, url, "--header", `Authorization: Bearer ${token}`]);
   if (res.code !== 0) throw new Error(scrub(res.stderr || res.stdout, token) || "claude mcp add failed.");
+}
+
+/** Claude Code keeps user-scope servers in ~/.claude.json (or $CLAUDE_CONFIG_DIR/.claude.json). */
+export function claudeConfigFile(): string {
+  const dir = process.env.CLAUDE_CONFIG_DIR;
+  return dir ? path.join(dir, ".claude.json") : path.join(os.homedir(), ".claude.json");
 }
 
 const claudeCode: Integration = {
@@ -123,22 +145,31 @@ const claudeCode: Integration = {
   async detect() {
     return (await findClaude()) !== null;
   },
-  async connect(url, token) {
+  async connect(url, token, name) {
     const claude = await findClaude();
     if (!claude) throw new Error("Claude Code (claude) was not found on this computer.");
-    await registerWithClaude(claude, url, token);
+    await registerWithClaude(claude, url, token, name);
   },
-  async disconnect() {
+  async disconnect(name) {
     const claude = await findClaude();
-    if (claude) await run(claude, ["mcp", "remove", MCP_SERVER_NAME, "--scope", "user"]);
+    if (claude) await run(claude, ["mcp", "remove", name, "--scope", "user"]);
+  },
+  async registeredToken(name) {
+    return tokenInJson(claudeConfigFile(), name);
   },
 };
 
 // ---------- Codex (config.toml) ----------
 
-export const CODEX_BLOCK_START = `# >>> ${MCP_SERVER_NAME} (managed by the Environment Variables Obsidian plugin) >>>`;
-export const CODEX_BLOCK_END = `# <<< ${MCP_SERVER_NAME} <<<`;
-const UNMANAGED_CODEX_ENTRY = new RegExp(String.raw`^\s*\[\s*mcp_servers\s*\.\s*["']?${MCP_SERVER_NAME}["']?\s*\]`, "m");
+export const codexBlockStart = (name: string) => `# >>> ${name} (managed by the Environment Variables Obsidian plugin) >>>`;
+export const codexBlockEnd = (name: string) => `# <<< ${name} <<<`;
+export const CODEX_BLOCK_START = codexBlockStart(MCP_SERVER_NAME);
+export const CODEX_BLOCK_END = codexBlockEnd(MCP_SERVER_NAME);
+
+/** Server names only contain [a-z0-9_-], so they are safe inside a regular expression. */
+function unmanagedCodexEntry(name: string): RegExp {
+  return new RegExp(String.raw`^\s*\[\s*mcp_servers\s*\.\s*["']?${name}["']?\s*\]`, "m");
+}
 
 function codexHome(): string {
   return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
@@ -149,13 +180,15 @@ function tomlString(value: string): string {
   return JSON.stringify(value);
 }
 
-/** Removes our managed block. Returns the text unchanged when there is none. */
-export function removeCodexBlock(text: string): string {
-  const start = text.indexOf(CODEX_BLOCK_START);
+/** Removes our managed block for `name`. Returns the text unchanged when there is none. */
+export function removeCodexBlock(text: string, name = MCP_SERVER_NAME): string {
+  const startMarker = codexBlockStart(name);
+  const endMarker = codexBlockEnd(name);
+  const start = text.indexOf(startMarker);
   if (start < 0) return text;
-  const endMarker = text.indexOf(CODEX_BLOCK_END, start);
-  if (endMarker < 0) throw new Error("config.toml has an incomplete Environment Variables block. Fix or remove it by hand.");
-  let end = endMarker + CODEX_BLOCK_END.length;
+  const endAt = text.indexOf(endMarker, start);
+  if (endAt < 0) throw new Error("config.toml has an incomplete Environment Variables block. Fix or remove it by hand.");
+  let end = endAt + endMarker.length;
   if (text[end] === "\r") end++;
   if (text[end] === "\n") end++;
   const before = text.slice(0, start).replace(/(\r?\n){2,}$/, "\n");
@@ -163,23 +196,31 @@ export function removeCodexBlock(text: string): string {
 }
 
 /** Adds (or replaces) our managed block at the end of config.toml, leaving everything else as it was. */
-export function upsertCodexBlock(text: string, url: string, token: string): string {
-  const base = removeCodexBlock(text);
-  if (UNMANAGED_CODEX_ENTRY.test(base)) {
-    throw new Error(
-      `config.toml already has an [mcp_servers.${MCP_SERVER_NAME}] entry that was not added by this plugin. Remove it and connect again.`,
-    );
+export function upsertCodexBlock(text: string, url: string, token: string, name = MCP_SERVER_NAME): string {
+  const base = removeCodexBlock(text, name);
+  if (unmanagedCodexEntry(name).test(base)) {
+    throw new Error(`config.toml already has an [mcp_servers.${name}] entry that was not added by this plugin. Remove it and connect again.`);
   }
   const block = [
-    CODEX_BLOCK_START,
-    `[mcp_servers.${MCP_SERVER_NAME}]`,
+    codexBlockStart(name),
+    `[mcp_servers.${name}]`,
     `url = ${tomlString(url)}`,
     `http_headers = { "Authorization" = ${tomlString(`Bearer ${token}`)} }`,
-    CODEX_BLOCK_END,
+    codexBlockEnd(name),
     "",
   ].join("\n");
   const trimmed = base.replace(/\s+$/, "");
   return trimmed ? `${trimmed}\n\n${block}` : block;
+}
+
+/** The token inside our managed block for `name`, or null. */
+export function codexBlockToken(text: string, name = MCP_SERVER_NAME): string | null {
+  const start = text.indexOf(codexBlockStart(name));
+  if (start < 0) return null;
+  const end = text.indexOf(codexBlockEnd(name), start);
+  const block = text.slice(start, end < 0 ? undefined : end);
+  const m = /"Authorization"\s*=\s*"Bearer\s+([^"\s]+)"/.exec(block);
+  return m ? m[1] : null;
 }
 
 const codex: Integration = {
@@ -188,18 +229,26 @@ const codex: Integration = {
   async detect() {
     return isDir(codexHome());
   },
-  async connect(url, token) {
+  async connect(url, token, name) {
     const file = path.join(codexHome(), "config.toml");
     const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
     fs.mkdirSync(codexHome(), { recursive: true });
-    fs.writeFileSync(file, upsertCodexBlock(current, url, token), "utf8");
+    fs.writeFileSync(file, upsertCodexBlock(current, url, token, name), "utf8");
   },
-  async disconnect() {
+  async disconnect(name) {
     const file = path.join(codexHome(), "config.toml");
     if (!fs.existsSync(file)) return;
     const current = fs.readFileSync(file, "utf8");
-    const next = removeCodexBlock(current);
+    const next = removeCodexBlock(current, name);
     if (next !== current) fs.writeFileSync(file, next, "utf8");
+  },
+  async registeredToken(name) {
+    const file = path.join(codexHome(), "config.toml");
+    try {
+      return fs.existsSync(file) ? codexBlockToken(fs.readFileSync(file, "utf8"), name) : null;
+    } catch {
+      return null;
+    }
   },
 };
 
@@ -233,22 +282,25 @@ function jsonFileIntegration(opts: {
     async detect() {
       return opts.detectDirs().some(isDir);
     },
-    async connect(url, token) {
+    async connect(url, token, name) {
       const file = opts.file();
       const config = readJsonObject(file);
       const servers = (config.mcpServers ?? {}) as Record<string, unknown>;
-      servers[MCP_SERVER_NAME] = opts.entry(url, token);
+      servers[name] = opts.entry(url, token);
       config.mcpServers = servers;
       writeJson(file, config);
     },
-    async disconnect() {
+    async disconnect(name) {
       const file = opts.file();
       if (!fs.existsSync(file)) return;
       const config = readJsonObject(file);
       const servers = config.mcpServers as Record<string, unknown> | undefined;
-      if (!servers || !(MCP_SERVER_NAME in servers)) return;
-      delete servers[MCP_SERVER_NAME];
+      if (!servers || !(name in servers)) return;
+      delete servers[name];
       writeJson(file, config);
+    },
+    async registeredToken(name) {
+      return tokenInJson(opts.file(), name);
     },
   };
 }

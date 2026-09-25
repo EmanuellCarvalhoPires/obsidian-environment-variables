@@ -70,7 +70,13 @@ export class Broker {
     return { ok: true, secrets: secrets.map(toMetadata) };
   }
 
-  async execute(input: RequestInput, client: ClientContext): Promise<BrokerResult> {
+  /**
+   * `fromVaultTool`: the request comes from a vault tool. Permission is asked by the AI client, so no
+   * approval dialog opens in Obsidian, not even for variables that may go to any host. The agent guide
+   * requires the agent to ask the user (showing the destination) before running such a tool.
+   * Hosts, placement, redirects and masking are still enforced.
+   */
+  async execute(input: RequestInput, client: ClientContext, options: { fromVaultTool?: boolean } = {}): Promise<BrokerResult> {
     const who = client.name;
     if (!this.store.isUnlocked) {
       this.audit.add({ client: who, action: "request", secrets: [], method: input?.method, outcome: "locked" });
@@ -99,8 +105,9 @@ export class Broker {
     const target = prepared.displayTarget;
     const redactor = createRedactor(prepared.usedSecrets);
 
-    if (prepared.needsApproval) {
-      const anyHost = prepared.usedSecrets.filter((s) => s.allowAnyHost === true).map((s) => s.name);
+    const anyHost = prepared.usedSecrets.filter((s) => s.allowAnyHost === true).map((s) => s.name);
+    const needsApproval = options.fromVaultTool ? false : prepared.needsApproval;
+    if (needsApproval) {
       const approved = await this.approve({ client: who, method: prepared.method, url: target, secrets: names, anyHost });
       if (!approved) {
         this.audit.add({ client: who, action: "request", secrets: names, method: prepared.method, target, outcome: "denied" });

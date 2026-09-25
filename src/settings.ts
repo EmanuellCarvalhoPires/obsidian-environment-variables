@@ -5,23 +5,43 @@ import { SecretType } from "./store/types";
 export interface Settings {
   serverEnabled: boolean;
   port: number;
+  /**
+   * Name this vault's server is registered under in AI clients. Each vault has its own, so two open
+   * vaults never replace each other's registration. Set on first load (see main.ts).
+   */
+  mcpServerName: string;
   autoLockMinutes: number;
   approvalTimeoutSeconds: number;
   timeoutSeconds: number;
   maxResponseMB: number;
   warnOnTokenPaste: boolean;
   showNamesWhileLocked: boolean;
+  /** Vault tools: MCP tools defined by notes. Off by default. */
+  toolsEnabled: boolean;
+  /** kind: script tools (code in the note, run in a worker). Off by default, even with tools on. */
+  scriptsEnabled: boolean;
+  /** Tag of tool notes (subtags included). */
+  toolTag: string;
+  /** Tag of request notes, for discovery. */
+  requestTag: string;
+  scriptTimeoutSeconds: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   serverEnabled: false,
   port: 27150,
+  mcpServerName: "",
   autoLockMinutes: 0,
   approvalTimeoutSeconds: 120,
   timeoutSeconds: 30,
   maxResponseMB: 10,
   warnOnTokenPaste: true,
   showNamesWhileLocked: true,
+  toolsEnabled: false,
+  scriptsEnabled: false,
+  toolTag: "mcp/tool",
+  requestTag: "api/request",
+  scriptTimeoutSeconds: 30,
 };
 
 /** Name and type of a variable: enough to write a reference, never the value. */

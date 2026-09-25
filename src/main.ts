@@ -1,4 +1,4 @@
-import { Editor, Notice, Plugin, setIcon } from "obsidian";
+import { Editor, FileSystemAdapter, getLanguage, Notice, Plugin, setIcon } from "obsidian";
 import { AuditLog } from "./audit/auditLog";
 import { Broker } from "./engine/broker";
 import { detectToken } from "./engine/tokenPatterns";
@@ -7,14 +7,23 @@ import { placeholderExtension, renderPlaceholders } from "./editor/render";
 import { attachPropertySuggest, SecretNameSuggest, setPropertySuggestActive } from "./editor/suggest";
 import { clearProperties, decorateProperties } from "./editor/properties";
 import { t } from "./i18n";
-import { IntegrationId, integrationById } from "./integrations/integrations";
-import { accessOf, ClientAccess, ClientRecord, contextOf, createClient, findClient } from "./server/clients";
-import { LocalServer } from "./server/localServer";
+import { Integration, IntegrationId, integrationById, MCP_SERVER_NAME } from "./integrations/integrations";
+import { accessOf, ClientAccess, ClientContext, ClientRecord, contextOf, createClient, findClient } from "./server/clients";
+import { LocalServer, PortInUseError, PortOwner, probePort } from "./server/localServer";
+import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIdentity";
 import { NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
+import { buildGuide } from "./tools/guide";
+import { ObsidianNoteSource } from "./tools/obsidianSource";
+import { ToolRegistry } from "./tools/registry";
+import { ScriptRunner } from "./tools/scriptRunner";
+import { ToolsService } from "./tools/service";
 import { ApprovalModal, referenceFor, SecretModal, SecretPickerModal } from "./ui/modals";
 import { EnvironmentVariablesSettingTab } from "./ui/settingsTab";
 import { EnvironmentVariablesView, ICON_LOCKED, ICON_UNLOCKED, VIEW_TYPE } from "./ui/view";
+
+/** How many ports to try, upward from the configured one, when another vault or program holds it. */
+const MAX_PORT_TRIES = 20;
 
 export default class EnvironmentVariablesPlugin extends Plugin {
   data!: PluginData;
@@ -22,6 +31,10 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   audit!: AuditLog;
   broker!: Broker;
   server: LocalServer | null = null;
+  registry!: ToolRegistry;
+  tools!: ToolsService;
+  /** Who runs a tool from the panel: the user, with access to every variable. */
+  readonly localClient: ClientContext = { id: "obsidian", name: "Obsidian", access: { mode: "all" } };
 
   private ribbon: HTMLElement | null = null;
   private lastActivity = Date.now();
@@ -29,6 +42,12 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   private saveTimer: number | undefined;
   private propertyTimer: number | undefined;
   private propertyDocs = new Set<Document>();
+  private toolScanTimer: number | undefined;
+  /** This vault's identity: its server, port and MCP server name are its own. */
+  vaultId = "";
+  vaultName = "";
+  /** Connected AI clients still point at an old name or port: re-register them once the server runs. */
+  private pendingReconnect = false;
 
   get vaultFilePath(): string {
     return `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/vault.enc`;
@@ -36,6 +55,10 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
   async onload(): Promise<void> {
     this.data = withDefaults((await this.loadData()) as Partial<PluginData> | null);
+    const vaultAdapter = this.app.vault.adapter;
+    this.vaultName = this.app.vault.getName();
+    this.vaultId = vaultIdOf(vaultAdapter instanceof FileSystemAdapter ? vaultAdapter.getBasePath() : this.vaultName);
+    await this.ensureServerName();
 
     const adapter = this.app.vault.adapter;
     const path = this.vaultFilePath;
@@ -60,6 +83,30 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       }),
       () => this.touch(),
     );
+
+    // Vault tools: MCP tools defined by notes, found by tag.
+    const source = new ObsidianNoteSource(this.app);
+    const s = () => this.data.settings;
+    this.registry = new ToolRegistry(
+      source,
+      () => ({ enabled: s().toolsEnabled, toolTag: s().toolTag, scriptsEnabled: s().scriptsEnabled }),
+    );
+    this.tools = new ToolsService({
+      registry: this.registry,
+      source,
+      broker: this.broker,
+      runner: new ScriptRunner(),
+      audit: this.audit,
+      settings: () => ({ ...s() }),
+      guide: () => this.agentGuide(),
+    });
+    this.registerEvent(this.app.metadataCache.on("changed", () => this.scheduleToolScan()));
+    this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleToolScan()));
+    this.registerEvent(this.app.vault.on("delete", () => this.scheduleToolScan()));
+    this.registerEvent(this.app.vault.on("rename", () => this.scheduleToolScan()));
+    this.register(() => {
+      if (this.toolScanTimer !== undefined) window.clearTimeout(this.toolScanTimer);
+    });
 
     this.registerView(VIEW_TYPE, (leaf) => new EnvironmentVariablesView(leaf, this));
 
@@ -98,6 +145,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       },
     });
 
+    this.addCommand({ id: "copy-agent-guide", name: t("cmd.copyGuide"), callback: () => this.copyAgentGuide() });
+
     this.addSettingTab(new EnvironmentVariablesSettingTab(this.app, this));
     this.registerEditorSuggest(new SecretNameSuggest(this));
     // Properties panel: attach the same autocomplete to a value field when it gets focus.
@@ -132,6 +181,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
     this.app.workspace.onLayoutReady(() => {
       if (this.data.settings.serverEnabled) void this.startServer();
+      this.scheduleToolScan();
     });
   }
 
@@ -290,12 +340,14 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     if (this.server?.running) await this.reconnectIntegrations();
   }
 
-  private async startServer(): Promise<void> {
-    if (this.server?.running) return;
-    const server = new LocalServer({
-      port: this.data.settings.port,
+  private createServer(port: number): LocalServer {
+    return new LocalServer({
+      port,
       broker: this.broker,
       version: this.manifest.version,
+      tools: this.tools,
+      guide: (request) => this.agentGuide(request),
+      vault: { id: this.vaultId, name: this.vaultName },
       authenticate: async (token) => {
         const client = await findClient(this.data.clients, token);
         if (!client) return null;
@@ -304,13 +356,109 @@ export default class EnvironmentVariablesPlugin extends Plugin {
         return contextOf(client);
       },
     });
-    try {
-      await server.start();
-      this.server = server;
-    } catch (err) {
-      this.server = null;
-      new Notice(t("notice.serverError", { error: err instanceof Error ? err.message : String(err) }));
+  }
+
+  /**
+   * Starts this vault's server. When the port belongs to another vault (or another program), the
+   * server moves to the next free port and the connected AI clients are re-registered with it.
+   */
+  private async startServer(): Promise<void> {
+    if (this.server?.running) return;
+    const requested = this.data.settings.port;
+    let port = requested;
+    let owner: PortOwner | null = null;
+    let ownRetries = 0;
+    let lastError = "";
+    for (let tries = 0; tries < MAX_PORT_TRIES && !this.server?.running; tries++) {
+      const server = this.createServer(port);
+      try {
+        await server.start();
+        this.server = server;
+      } catch (err) {
+        if (!(err instanceof PortInUseError)) {
+          lastError = err instanceof Error ? err.message : String(err);
+          break;
+        }
+        const found = await probePort(port);
+        // Our own previous server, still closing after a plugin reload: wait for it instead of moving.
+        if (found?.vaultId === this.vaultId && ownRetries < 6) {
+          ownRetries++;
+          tries--;
+          await new Promise((r) => window.setTimeout(r, 500));
+          continue;
+        }
+        if (port === requested) owner = found;
+        lastError = err.message;
+        if (port >= 65535) break;
+        port++;
+      }
     }
+    if (!this.server?.running) {
+      this.server = null;
+      new Notice(t("notice.serverError", { error: lastError }));
+    } else if (port !== requested) {
+      this.data.settings.port = port;
+      await this.saveAll();
+      this.pendingReconnect = true;
+      new Notice(t("notice.portMoved", { from: requested, to: port, owner: this.describeOwner(owner) }), 12_000);
+    }
+    this.emitServerChange();
+    if (this.server?.running && this.pendingReconnect) {
+      this.pendingReconnect = false;
+      await this.reconnectIntegrations();
+    }
+  }
+
+  private describeOwner(owner: PortOwner | null): string {
+    if (owner?.isPlugin && owner.vaultName) return t("notice.portOwnerVault", { name: owner.vaultName });
+    if (owner?.isPlugin) return t("notice.portOwnerOtherVault");
+    return t("notice.portOwnerProgram");
+  }
+
+  // ---------- MCP server name ----------
+
+  get serverName(): string {
+    return this.data.settings.mcpServerName;
+  }
+
+  /**
+   * Gives the vault its own MCP server name on first load. A vault connected before 1.3.0 keeps the
+   * old shared name only if the registration under it is its own (same token); otherwise another vault
+   * owns it, and this vault's clients are re-registered under the new name when the server starts.
+   */
+  private async ensureServerName(): Promise<void> {
+    const s = this.data.settings;
+    if (SERVER_NAME_PATTERN.test(s.mcpServerName)) return;
+    const connected = this.data.clients.filter((c) => c.integration);
+    let ownsLegacy = false;
+    for (const c of connected) {
+      if (await this.ownsRegistration(integrationById(c.integration!), MCP_SERVER_NAME, c)) ownsLegacy = true;
+    }
+    s.mcpServerName = ownsLegacy ? MCP_SERVER_NAME : serverNameFor(this.vaultName, this.vaultId);
+    if (!ownsLegacy && connected.length > 0) this.pendingReconnect = true;
+    await this.saveAll();
+  }
+
+  /** True when the entry registered under `name` in that AI client holds this vault's token. */
+  private async ownsRegistration(integration: Integration | undefined, name: string, client: ClientRecord): Promise<boolean> {
+    if (!integration) return false;
+    const token = await integration.registeredToken(name).catch(() => null);
+    return !!token && !!(await findClient([client], token));
+  }
+
+  /** Renames this vault's server in every connected AI client. */
+  async setMcpServerName(name: string): Promise<void> {
+    const old = this.serverName;
+    if (name === old || !SERVER_NAME_PATTERN.test(name)) return;
+    for (const c of this.data.clients.filter((x) => x.integration)) {
+      const integration = integrationById(c.integration!);
+      // Never remove an entry that another vault registered under the old name.
+      if (await this.ownsRegistration(integration, old, c)) await integration?.disconnect(old).catch(() => undefined);
+    }
+    this.data.settings.mcpServerName = name;
+    await this.saveAll();
+    if (this.server?.running) await this.reconnectIntegrations();
+    else this.pendingReconnect = true;
     this.emitServerChange();
   }
 
@@ -318,6 +466,65 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     await this.server?.stop();
     this.server = null;
     this.emitServerChange();
+  }
+
+  // ---------- vault tools ----------
+
+  async setToolsEnabled(enabled: boolean): Promise<void> {
+    this.data.settings.toolsEnabled = enabled;
+    await this.saveAll();
+    this.onToolSettingsChanged();
+  }
+
+  async setScriptsEnabled(enabled: boolean): Promise<void> {
+    this.data.settings.scriptsEnabled = enabled;
+    await this.saveAll();
+    this.onToolSettingsChanged();
+  }
+
+  /** Tags, the scripts switch or the feature switch changed: rescan and tell connected clients. */
+  onToolSettingsChanged(): void {
+    void this.registry.refresh().then(() => {
+      this.registry.updateStatuses();
+      this.server?.notifyToolsChanged();
+      this.emitServerChange();
+    });
+  }
+
+  private scheduleToolScan(): void {
+    if (!this.data.settings.toolsEnabled) return;
+    if (this.toolScanTimer !== undefined) window.clearTimeout(this.toolScanTimer);
+    this.toolScanTimer = window.setTimeout(() => {
+      this.toolScanTimer = undefined;
+      void this.registry.refresh();
+    }, 300);
+  }
+
+  /** The guide for AI agents, in the language of Obsidian, with the current settings. */
+  agentGuide(request?: string): string {
+    const s = this.data.settings;
+    return buildGuide(
+      getLanguage().toLowerCase().startsWith("pt") ? "pt" : "en",
+      {
+        vaultName: this.vaultName,
+        vaultPath: this.app.vault.adapter instanceof FileSystemAdapter ? this.app.vault.adapter.getBasePath() : this.vaultName,
+        mcpServerName: s.mcpServerName,
+        toolsEnabled: s.toolsEnabled,
+        scriptsEnabled: s.scriptsEnabled,
+        toolTag: s.toolTag,
+        requestTag: s.requestTag,
+        scriptTimeoutSeconds: s.scriptTimeoutSeconds,
+        serverUrl: this.serverUrl,
+        serverRunning: this.server?.running ?? false,
+        tools: this.registry.list().map((e) => ({ name: e.name, status: e.status })),
+      },
+      request,
+    );
+  }
+
+  copyAgentGuide(): void {
+    void navigator.clipboard.writeText(this.agentGuide());
+    new Notice(t("notice.guideCopied"), 8_000);
   }
 
   // ---------- clients ----------
@@ -337,7 +544,9 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   async revokeClient(id: string): Promise<void> {
     const client = this.data.clients.find((c) => c.id === id);
     if (client?.integration) {
-      await integrationById(client.integration)?.disconnect().catch(() => undefined);
+      const integration = integrationById(client.integration);
+      // Only remove the entry if it is this vault's: under a shared old name it may belong to another vault.
+      if (await this.ownsRegistration(integration, this.serverName, client)) await integration?.disconnect(this.serverName).catch(() => undefined);
     }
     this.data.clients = this.data.clients.filter((c) => c.id !== id);
     await this.saveAll();
@@ -372,7 +581,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     const grant = access ?? (previous ? accessOf(previous) : { mode: "some" as const, secretIds: [] });
     const { record, token } = await createClient(integration.label, grant, id);
     try {
-      await integration.connect(this.serverUrl, token);
+      await integration.connect(this.serverUrl, token, this.serverName);
     } catch (err) {
       new Notice(t("notice.connectFailed", { client: integration.label, error: err instanceof Error ? err.message : String(err) }), 10_000);
       return false;
@@ -386,7 +595,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     return true;
   }
 
-  /** After a port change, re-register every connected AI client with the new URL. */
+  /** After a port or name change, re-register every connected AI client with the new URL and name. */
   private async reconnectIntegrations(): Promise<void> {
     const ids = this.data.clients.map((c) => c.integration).filter((i): i is IntegrationId => !!i);
     for (const id of ids) await this.connectIntegration(id, undefined, true);
