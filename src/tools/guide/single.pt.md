@@ -1,6 +1,6 @@
-# Adicionar uma ferramenta no plugin Environment Variables
+# Adicionar uma ferramenta no plugin Environment Keys
 
-Você vai adicionar **uma única ferramenta MCP** definida por nota ao cofre do Obsidian deste usuário, usando o plugin **Environment Variables** (ex.: "buscar um ticket pela chave"). Se o pedido tiver mais de uma ação, pare e sugira o prompt "Adicionar várias ferramentas". Se o ambiente ainda não estiver configurado (cliente sem o servidor do plugin, ferramentas do cofre desligadas, app sem nota de serviço ou sem variável de ambiente), avise e sugira o prompt "Setar o ambiente MCP".
+Você vai adicionar **uma única ferramenta MCP** definida por nota ao cofre do Obsidian deste usuário, usando o plugin **Environment Keys** (ex.: "buscar um ticket pela chave"). Se o pedido tiver mais de uma ação, pare e sugira o prompt "Adicionar várias ferramentas". Se o ambiente ainda não estiver configurado (cliente sem o servidor do plugin, ferramentas do cofre desligadas, app sem nota de serviço ou sem variável de ambiente), avise e sugira o prompt "Setar o ambiente MCP".
 
 Este pedido tem um escopo menor. Isto muda as regras do guia assim:
 

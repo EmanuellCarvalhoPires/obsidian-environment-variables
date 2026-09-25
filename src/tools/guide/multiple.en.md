@@ -1,6 +1,6 @@
-# Add several tools to the Environment Variables plugin
+# Add several tools to the Environment Keys plugin
 
-You are going to add **several MCP tools** defined by notes to this user's Obsidian vault, using the **Environment Variables** plugin (e.g. "list, get and comment on issues"). The tools can belong to an app that is already set up in the vault or to a new app. If the client does not have the plugin's server yet, or vault tools are off, say so and suggest the "Set up the MCP environment" prompt.
+You are going to add **several MCP tools** defined by notes to this user's Obsidian vault, using the **Environment Keys** plugin (e.g. "list, get and comment on issues"). The tools can belong to an app that is already set up in the vault or to a new app. If the client does not have the plugin's server yet, or vault tools are off, say so and suggest the "Set up the MCP environment" prompt.
 
 This changes the guide's rules as follows:
 
