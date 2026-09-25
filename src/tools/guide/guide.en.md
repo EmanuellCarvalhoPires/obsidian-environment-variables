@@ -175,6 +175,21 @@ export default async function (ctx) {
 
 Other vault properties (`tags`, `up`, `aliases`...) can stay in the note as usual.
 
+### 4.6 Note names
+
+Use these patterns when you create notes, unless the vault already has another pattern for the same app. In that case, follow the vault's.
+
+| Note | File name | Example |
+| --- | --- | --- |
+| Tool | Same as the value of `tool:` | `jira_get_issue` |
+| Request | `<App> - <action>` | `Jira - Get issue` |
+| Service | `<App> - <instance>` | `Jira - Acme` |
+| App index | `<App>` | `Jira` |
+
+- In service notes, the part after the last separator becomes the value the AI picks in the call: "Jira - Acme" and "Jira - Globex" become `Acme` and `Globex`. Use the same prefix in all of the app's service notes.
+- Do not use characters that Windows does not accept in file names: `\ / : * ? " < > |`.
+- Show the note names in the plan before creating them.
+
 ## 5. Script API (`ctx`)
 
 The ```` ```js ```` block must export the function: `export default async function (ctx) { ... }`. The `return` value becomes the tool result and must be JSON-serializable.
