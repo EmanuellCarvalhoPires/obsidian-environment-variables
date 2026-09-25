@@ -371,6 +371,23 @@
   margin-bottom: var(--size-4-2);
 }
 
+.ev-prompt .ev-item-top {
+  flex-wrap: wrap;
+  padding-right: 0;
+}
+
+.ev-prompt-name {
+  font-weight: var(--font-semibold);
+}
+
+.ev-prompt .ev-tool-actions {
+  margin: 0 0 0 auto;
+}
+
+.ev-prompt .ev-tool-guide {
+  margin-top: var(--size-4-2);
+}
+
 .ev-tool-guide,
 .ev-tool-code {
   white-space: pre-wrap;
