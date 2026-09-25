@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractCodeBlock, inputSchema, parseToolNote, validateArgs } from "../src/tools/definition";
-import { buildGuide, GuideState } from "../src/tools/guide";
+import { buildGuide, GuideMode } from "../src/tools/guide";
 import { ToolRegistry } from "../src/tools/registry";
 import { parseRequestBlock, resolveRequest } from "../src/tools/requestNote";
 import { hasTag, linkTarget, ToolError, VaultNote } from "../src/tools/types";
@@ -164,44 +164,62 @@ describe("registry", () => {
 });
 
 describe("agent guide", () => {
-  const state: GuideState = {
-    vaultName: "Cofre",
-    vaultPath: "C:/Users/me/Cofre",
-    mcpServerName: "environment-variables-cofre",
-    toolsEnabled: true,
-    scriptsEnabled: false,
-    toolTag: "mcp/ferramenta",
-    requestTag: "api/requisicao",
-    scriptTimeoutSeconds: 30,
-    serverUrl: "http://127.0.0.1:27150/mcp",
-    serverRunning: true,
-    tools: [{ name: "jira_get_issue", status: "ready" }],
-  };
+  const modes: GuideMode[] = ["setup", "single", "multiple"];
 
-  it("fills the current settings and keeps the mandatory workflow", () => {
+  it("keeps the mandatory workflow in every prompt and language", () => {
     for (const lang of ["pt", "en"] as const) {
-      const text = buildGuide(lang, state, "tools for Google Drive");
-      expect(text).not.toMatch(/%[A-Z_]+%/);
-      expect(text).toContain("mcp/ferramenta");
-      expect(text).toContain("api/requisicao");
-      expect(text).toContain("jira_get_issue");
-      expect(text).toContain("tools for Google Drive");
-      expect(text).toContain("OAuth");
-      expect(text).toContain("mcp__environment-variables-cofre__list_vault_tools");
-      expect(text).toContain("C:/Users/me/Cofre");
+      for (const mode of modes) {
+        const text = buildGuide(lang, "tools for Google Drive", mode);
+        expect(text).not.toMatch(/%[A-Z_]+%/);
+        expect(text).toContain("tools for Google Drive");
+        expect(text).toContain("OAuth");
+        expect(text).toContain("service_tag");
+      }
     }
-    const pt = buildGuide("pt", state);
+    const pt = buildGuide("pt");
     expect(pt).toContain("pergunte ao usuário antes de montar o plano");
     expect(pt).toContain("Plano de Implementação");
     expect(pt).toContain("espere a aprovação explícita do usuário");
     expect(pt).toContain("As notas que você cria são genéricas");
     expect(pt).toContain("Segredos que permitem qualquer domínio: peça autorização sempre");
-    expect(pt).toContain("service_tag");
-    const en = buildGuide("en", state);
+    const en = buildGuide("en");
     expect(en).toContain("ask the user before writing the plan");
     expect(en).toContain("Implementation Plan");
     expect(en).toContain("wait for the user's explicit approval");
     expect(en).toContain("The notes you create are generic");
     expect(en).toContain("Secrets that allow any host: always ask for permission");
+  });
+
+  it("is generic: the same text on any computer, with nothing of the user's vault", () => {
+    for (const lang of ["pt", "en"] as const) {
+      for (const mode of modes) {
+        const text = buildGuide(lang, undefined, mode);
+        expect(text).not.toMatch(/(^|[\s`(])[A-Za-z]:[\/]|\/Users\/|\/home\//m); // no folder path
+        expect(text).not.toMatch(/environment-variables-[a-z0-9]/); // no server name of a vault
+        expect(text).not.toMatch(/mcp__environment-variables/);
+        expect(text).toContain("list_vault_tools");
+      }
+    }
+  });
+
+  it("builds one prompt per task that ends with the mandatory question", () => {
+    const titles = { setup: "# Setar o ambiente MCP", single: "# Adicionar uma ferramenta", multiple: "# Adicionar várias ferramentas" };
+    for (const [mode, title] of Object.entries(titles) as Array<[GuideMode, string]>) {
+      const text = buildGuide("pt", "meu pedido", mode);
+      expect(text.startsWith(title)).toBe(true);
+      expect(text).toContain("As notas que você cria são genéricas");
+      const question = text.indexOf("## Pergunta obrigatória antes de criar qualquer coisa");
+      expect(question).toBeGreaterThan(text.indexOf("## Pedido do usuário"));
+      expect(text.indexOf("## Pedido do usuário")).toBeGreaterThan(text.indexOf("## 9."));
+      expect(text.slice(question)).toContain("não siga com a criação");
+    }
+    expect(buildGuide("pt", "meu pedido", "setup")).toContain("Quais variáveis de ambiente (segredos) devem ser configuradas?");
+    expect(buildGuide("pt", "meu pedido", "setup")).toContain("Para qual app ou serviço elas são?");
+    expect(buildGuide("en", undefined, "setup")).toContain("do not go on with the creation");
+    expect(buildGuide("pt")).toBe(buildGuide("pt", undefined, "setup"));
+    expect(buildGuide("pt")).not.toContain("## Pedido do usuário");
+    expect(buildGuide("pt", undefined, "single")).toContain("Plano resumido em vez do modelo da seção 8");
+    expect(buildGuide("en", undefined, "single")).toContain("Short plan instead of the template in section 8");
+    expect(buildGuide("en", undefined, "multiple")).toContain("one row per tool");
   });
 });
