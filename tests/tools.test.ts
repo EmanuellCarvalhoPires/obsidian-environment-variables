@@ -161,6 +161,100 @@ describe("registry", () => {
     await registry.refresh();
     expect(calls).toBe(1);
   });
+
+  it("ignores notes that are not tool or instance notes", async () => {
+    const { source, registry } = setup();
+    source.add("a.md", { tags: ["mcp/tool"], tool: "a", kind: "request", request: "x", description: "d" });
+    source.add("notes/diary.md", { tags: ["daily"] });
+    await registry.refresh();
+    source.reads = [];
+    source.add("notes/diary.md", { tags: ["daily"] }, "edited");
+    expect(registry.noteChanged("notes/diary.md")).toBe(false);
+    source.remove("notes/diary.md");
+    expect(registry.noteDeleted("notes/diary.md")).toBe(false);
+    await registry.ensureFresh();
+    expect(source.reads).toEqual([]);
+  });
+
+  it("reads again only the tool note that changed", async () => {
+    const { source, registry } = setup();
+    source.add("a.md", { tags: ["mcp/tool"], tool: "a", kind: "request", request: "x", description: "old" });
+    source.add("b.md", { tags: ["mcp/tool"], tool: "b", kind: "request", request: "x", description: "d" });
+    await registry.refresh();
+    source.reads = [];
+    source.add("a.md", { tags: ["mcp/tool"], tool: "a", kind: "request", request: "x", description: "new" });
+    expect(registry.noteChanged("a.md")).toBe(true);
+    await registry.ensureFresh();
+    expect(source.reads).toEqual(["a.md"]);
+    expect(registry.get("a")!.description).toBe("new");
+    expect(registry.list().map((e) => e.name)).toEqual(["a", "b"]);
+  });
+
+  it("follows tool notes that gain or lose the tag, are renamed or deleted", async () => {
+    const { source, registry } = setup();
+    source.add("a.md", { tags: ["mcp/tool"], tool: "a", kind: "request", request: "x", description: "d" });
+    source.add("c.md", { tags: ["draft"], tool: "c", kind: "request", request: "x", description: "d" });
+    await registry.refresh();
+
+    source.add("c.md", { tags: ["mcp/tool"], tool: "c", kind: "request", request: "x", description: "d" });
+    expect(registry.noteChanged("c.md")).toBe(true);
+    await registry.ensureFresh();
+    expect(registry.list().map((e) => e.name)).toEqual(["a", "c"]);
+
+    source.add("c.md", { tags: ["draft"], tool: "c", kind: "request", request: "x", description: "d" });
+    expect(registry.noteChanged("c.md")).toBe(true);
+    await registry.ensureFresh();
+    expect(registry.list().map((e) => e.name)).toEqual(["a"]);
+
+    source.remove("a.md");
+    source.add("z/a.md", { tags: ["mcp/tool"], tool: "a", kind: "request", request: "x", description: "d" });
+    expect(registry.noteRenamed("a.md", "z/a.md")).toBe(true);
+    await registry.ensureFresh();
+    expect(registry.list().map((e) => e.notePath)).toEqual(["z/a.md"]);
+
+    source.remove("z/a.md");
+    expect(registry.noteDeleted("z/a.md")).toBe(true);
+    await registry.ensureFresh();
+    expect(registry.list()).toEqual([]);
+  });
+
+  it("finds duplicates across incremental updates", async () => {
+    const { source, registry } = setup();
+    source.add("a.md", { tags: ["mcp/tool"], tool: "dup", kind: "request", request: "x", description: "d" });
+    source.add("b.md", { tags: ["mcp/tool"], tool: "other", kind: "request", request: "x", description: "d" });
+    await registry.refresh();
+    source.add("b.md", { tags: ["mcp/tool"], tool: "dup", kind: "request", request: "x", description: "d" });
+    registry.noteChanged("b.md");
+    await registry.ensureFresh();
+    expect(registry.list().every((e) => e.status === "invalid")).toBe(true);
+    source.add("b.md", { tags: ["mcp/tool"], tool: "other", kind: "request", request: "x", description: "d" });
+    registry.noteChanged("b.md");
+    await registry.ensureFresh();
+    expect(registry.list().map((e) => [e.name, e.status, e.problems])).toEqual([
+      ["dup", "ready", []],
+      ["other", "ready", []],
+    ]);
+  });
+
+  it("updates instance choices when an instance note changes, without reading the tools", async () => {
+    const { source, registry } = setup();
+    source.add("T/get.md", { tags: ["mcp/tool"], tool: "svc_get", kind: "request", request: "x", service_tag: "svc", description: "d" });
+    source.add("S/Svc - One.md", { tags: ["svc"] });
+    await registry.refresh();
+    expect(registry.get("svc_get")!.serviceChoices!.map((c) => c.noteName)).toEqual(["Svc - One"]);
+    source.reads = [];
+
+    source.add("S/Svc - Two.md", { tags: ["svc"] });
+    expect(registry.noteChanged("S/Svc - Two.md")).toBe(true);
+    await registry.ensureFresh();
+    expect(registry.get("svc_get")!.serviceChoices!.map((c) => c.noteName)).toEqual(["Svc - One", "Svc - Two"]);
+
+    source.add("S/Svc - Two.md", { tags: ["other"] });
+    expect(registry.noteChanged("S/Svc - Two.md")).toBe(true);
+    await registry.ensureFresh();
+    expect(registry.get("svc_get")!.serviceChoices!.map((c) => c.noteName)).toEqual(["Svc - One"]);
+    expect(source.reads).toEqual([]);
+  });
 });
 
 describe("agent guide", () => {

@@ -20,6 +20,8 @@ export interface VaultNoteWithBody extends VaultNote {
 export interface NoteSource {
   /** Notes that carry the tag or one of its subtags. */
   byTag(tag: string): VaultNote[];
+  /** The note at this vault path, or undefined when there is none. */
+  get(path: string): VaultNote | undefined;
   /** Resolves "[[Name]]", "[[Name|alias]]", "Name" or a path, relative to `fromPath` like Obsidian links. */
   resolve(ref: string, fromPath?: string): VaultNote | undefined;
   /** Note text without the frontmatter. */

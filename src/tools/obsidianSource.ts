@@ -16,6 +16,11 @@ export class ObsidianNoteSource implements NoteSource {
     return out;
   }
 
+  get(path: string): VaultNote | undefined {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    return file instanceof TFile && file.extension === "md" ? this.toNote(file) : undefined;
+  }
+
   resolve(ref: string, fromPath = ""): VaultNote | undefined {
     const target = linkTarget(ref);
     if (!target) return undefined;
