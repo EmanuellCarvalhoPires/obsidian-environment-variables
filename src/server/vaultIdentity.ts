@@ -12,7 +12,7 @@ export function vaultIdOf(basePath: string): string {
   return createHash("sha256").update(basePath.replace(/\\/g, "/").toLowerCase()).digest("hex").slice(0, 16);
 }
 
-/** "Teste Plugin" → "teste-plugin", "Cofre Ação" → "cofre-acao". Falls back to the vault id. */
+/** "Work Notes" → "work-notes", "Café Ação" → "cafe-acao". Falls back to the vault id. */
 export function slugOf(vaultName: string, vaultId: string): string {
   const slug = vaultName
     .normalize("NFD")
@@ -25,7 +25,7 @@ export function slugOf(vaultName: string, vaultId: string): string {
   return slug || vaultId.slice(0, 8);
 }
 
-/** Default MCP server name of a vault, e.g. "environment-variables-teste-plugin". */
+/** Default MCP server name of a vault, e.g. "environment-variables-work-notes". */
 export function serverNameFor(vaultName: string, vaultId: string): string {
   return `${MCP_SERVER_NAME}-${slugOf(vaultName, vaultId)}`;
 }

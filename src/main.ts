@@ -1,4 +1,4 @@
-import { Editor, FileSystemAdapter, getLanguage, Notice, Plugin, setIcon } from "obsidian";
+import { Editor, FileSystemAdapter, Notice, Plugin, setIcon } from "obsidian";
 import { AuditLog } from "./audit/auditLog";
 import { Broker } from "./engine/broker";
 import { detectToken } from "./engine/tokenPatterns";
@@ -6,12 +6,12 @@ import { nodeTransport } from "./engine/transport";
 import { placeholderExtension, renderPlaceholders } from "./editor/render";
 import { attachPropertySuggest, SecretNameSuggest, setPropertySuggestActive } from "./editor/suggest";
 import { clearProperties, decorateProperties } from "./editor/properties";
-import { t } from "./i18n";
+import { currentLanguage, setLanguage, t } from "./i18n";
 import { Integration, IntegrationId, integrationById, MCP_SERVER_NAME } from "./integrations/integrations";
 import { accessOf, ClientAccess, ClientContext, ClientRecord, contextOf, createClient, findClient } from "./server/clients";
 import { LocalServer, PortInUseError, PortOwner, probePort } from "./server/localServer";
 import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIdentity";
-import { NameEntry, PluginData, withDefaults } from "./settings";
+import { LanguageSetting, NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
 import { buildGuide, GuideMode } from "./tools/guide";
 import { ObsidianNoteSource } from "./tools/obsidianSource";
@@ -55,6 +55,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
   async onload(): Promise<void> {
     this.data = withDefaults((await this.loadData()) as Partial<PluginData> | null);
+    setLanguage(this.data.settings.language);
     const vaultAdapter = this.app.vault.adapter;
     this.vaultName = this.app.vault.getName();
     this.vaultId = vaultIdOf(vaultAdapter instanceof FileSystemAdapter ? vaultAdapter.getBasePath() : this.vaultName);
@@ -206,6 +207,15 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /** Switches the plugin's language and redraws what is open. Command names follow after a restart. */
+  async setLanguageSetting(language: LanguageSetting): Promise<void> {
+    this.data.settings.language = language;
+    setLanguage(language);
+    await this.saveAll();
+    this.updateRibbon();
+    this.emitServerChange(); // the panel redraws on this event
   }
 
   private updateRibbon(): void {
@@ -504,7 +514,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
   /** The prompt for AI agents, in the language of Obsidian. Generic: it names nothing of this vault. */
   agentGuide(request?: string, mode: GuideMode = "setup"): string {
-    return buildGuide(getLanguage().toLowerCase().startsWith("pt") ? "pt" : "en", request, mode);
+    return buildGuide(currentLanguage() === "pt-BR" ? "pt" : "en", request, mode);
   }
 
   copyAgentGuide(mode: GuideMode = "setup"): void {

@@ -1,4 +1,5 @@
 import { App, Modal, Notice, Setting, SuggestModal } from "obsidian";
+import { iconLine } from "./dom";
 import { ApprovalRequest } from "../engine/broker";
 import { isValidPattern, parsePattern, wildcardRisk } from "../engine/hosts";
 import { ClientAccess } from "../server/clients";
@@ -226,7 +227,7 @@ export class ApprovalModal extends Modal {
     const pre = contentEl.createEl("pre", { cls: "ev-approval-target" });
     pre.setText(`${this.request.method} ${this.request.url}`);
     if (this.request.anyHost?.length) {
-      contentEl.createEl("p", { text: `⚠ ${t("modal.approval.anyHost", { secrets: this.request.anyHost.join(", ") })}`, cls: "ev-warning" });
+      iconLine(contentEl, "alert-triangle", t("modal.approval.anyHost", { secrets: this.request.anyHost.join(", ") }), "ev-warning ev-modal-warning");
     }
     const countdown = contentEl.createEl("p", { cls: "ev-muted" });
     let remaining = this.timeoutSeconds;

@@ -33,12 +33,15 @@ export function isGuideMode(value: unknown): value is GuideMode {
   return typeof value === "string" && (GUIDE_MODES as string[]).includes(value);
 }
 
+/** The files may come with Windows line endings (git autocrlf); the prompt always uses \n. */
+const lf = (text: string) => text.replace(/\r\n?/g, "\n");
+
 export function buildGuide(lang: GuideLanguage, request?: string, mode: GuideMode = "setup"): string {
   const text = request?.trim();
   const requestSection = text ? `${REQUEST_TITLE[lang]}\n\n${text}\n\n` : "";
   return (
-    TEMPLATES[mode][lang]
-      .split("%GUIDE%\n").join(`${(lang === "pt" ? pt : en).trimEnd()}\n\n`)
+    lf(TEMPLATES[mode][lang])
+      .split("%GUIDE%\n").join(`${lf(lang === "pt" ? pt : en).trimEnd()}\n\n`)
       .split("%REQUEST%\n").join(requestSection)
       .trimEnd() + "\n"
   );

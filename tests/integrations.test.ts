@@ -136,7 +136,7 @@ describe("Codex integration (config.toml)", () => {
 
 describe("one server name per vault", () => {
   const A = "environment-variables-cofre";
-  const B = "environment-variables-teste-plugin";
+  const B = "environment-variables-work-notes";
   const TOKEN_B = "evc_" + "cd".repeat(32);
 
   it("keeps two vaults side by side in mcp.json and reads back each token", async () => {
@@ -185,13 +185,13 @@ describe("one server name per vault", () => {
   });
 
   it("derives a valid, stable name from the vault", () => {
-    const id = vaultIdOf("C:\\Users\\x\\Documents\\Teste Plugin");
-    expect(id).toBe(vaultIdOf("c:/users/x/documents/teste plugin"));
-    expect(id).not.toBe(vaultIdOf("C:\\Users\\x\\Documents\\Cofre"));
-    expect(serverNameFor("Teste Plugin", id)).toBe(B);
-    expect(serverNameFor("Cofre Ação", id)).toBe("environment-variables-cofre-acao");
+    const id = vaultIdOf("C:\\Users\\x\\Documents\\Work Notes");
+    expect(id).toBe(vaultIdOf("c:/users/x/documents/work notes"));
+    expect(id).not.toBe(vaultIdOf("C:\\Users\\x\\Documents\\Notes"));
+    expect(serverNameFor("Work Notes", id)).toBe(B);
+    expect(serverNameFor("Café Ação", id)).toBe("environment-variables-cafe-acao");
     expect(slugOf("!!!", id)).toBe(id.slice(0, 8));
-    for (const n of [serverNameFor("Teste Plugin", id), serverNameFor("日本", id), MCP_SERVER_NAME]) expect(SERVER_NAME_PATTERN.test(n)).toBe(true);
+    for (const n of [serverNameFor("Work Notes", id), serverNameFor("日本", id), MCP_SERVER_NAME]) expect(SERVER_NAME_PATTERN.test(n)).toBe(true);
   });
 });
 

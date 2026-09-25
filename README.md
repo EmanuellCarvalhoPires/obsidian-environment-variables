@@ -1,10 +1,26 @@
 # Environment Variables
 
+**English**
+
+Environment Variables keeps your API tokens, passwords and other sensitive values encrypted inside your Obsidian vault, and lets AI agents such as Claude Code, Codex and Cursor use them without ever seeing them. Your notes refer to each value only by its name, and the plugin fills in the real value at the last moment, only for the websites you allowed.
+
+The plugin also turns your vault into a local MCP server: you describe API calls and tools in ordinary notes, and every connected AI agent can use them right away, with your AI client asking for your permission before it runs them. Everything runs on your computer, with no external service in between.
+
+**Português (PT-BR)**
+
+O Environment Variables guarda os seus tokens de API, senhas e outros dados sensíveis cifrados dentro do cofre do Obsidian e deixa que agentes de IA, como o Claude Code, o Codex e o Cursor, usem esses dados sem nunca vê-los. As suas notas citam cada valor só pelo nome, e o plugin coloca o valor real no último momento, apenas nos sites que você autorizou.
+
+O plugin também transforma o seu cofre num servidor MCP local: você descreve chamadas de API e ferramentas em notas comuns, e qualquer agente de IA conectado passa a usá-las na hora, com o seu cliente de IA pedindo a sua permissão antes de executá-las. Tudo roda no seu computador, sem nenhum serviço externo no meio.
+
+---
+
 **Hide your API tokens and other sensitive data from AI agents** such as Claude Code, Codex, Antigravity and Cursor.
 
 Store API tokens and environment variables encrypted inside your vault, reference them in notes by key, and let AI agents use them in HTTP requests **without ever seeing the values**.
 
 Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (Claude Code, Claude Desktop, Cursor, or any MCP client) needs to call an API, it sends the request to this plugin with the key. The plugin replaces the key with the real value right before sending, checks that the destination is allowed, masks the value in the response, and returns the result.
+
+> Available in English and Brazilian Portuguese. The language follows Obsidian's, or choose it in **Settings → Environment Variables → Language**.
 
 > Desktop only, Obsidian 1.13 or later. The plugin runs a local server, which needs Node.js APIs that are not available on mobile.
 
@@ -52,7 +68,7 @@ Start a new session in the tool to load it. **Disconnect** revokes the token and
 
 Each vault runs its **own server**: its own port, its own MCP server name, its own variables and client tokens. A token from one vault is refused by the server of another.
 
-- **Server name:** each vault registers under its own name, e.g. `environment-variables-teste-plugin` (Settings → **MCP server name**), so connecting one vault never replaces another vault's entry in Claude Code, Codex, Antigravity or Cursor. A vault connected before 1.3.0 keeps the name `environment-variables` only if the entry registered under it holds that vault's token; otherwise it gets a name of its own and its connected tools are registered again under it.
+- **Server name:** each vault registers under its own name, e.g. `environment-variables-work-notes` (Settings → **MCP server name**), so connecting one vault never replaces another vault's entry in Claude Code, Codex, Antigravity or Cursor. A vault connected before 1.3.0 keeps the name `environment-variables` only if the entry registered under it holds that vault's token; otherwise it gets a name of its own and its connected tools are registered again under it.
 - **Port:** if the port is already used by another vault (or another program), the server moves to the next free port, saves it and updates the connected tools. `/v1/health` tells which vault owns a port (a hash of its folder and its name, no secrets).
 
 ### Other MCP clients
