@@ -1,6 +1,6 @@
-# Guia para agentes de IA: criar ferramentas do cofre (vault tools)
+## Guia de referência do plugin
 
-Você vai configurar **ferramentas MCP definidas por notas** do cofre do Obsidian deste usuário, usando o plugin **Environment Variables**. Uma ferramenta pode ser uma só (ex.: "buscar um ticket do Jira") ou um conjunto para um app ou serviço (ex.: "ferramentas para o Google Drive").
+Onde as instruções antes ou depois deste guia mudarem uma regra dele, valem essas instruções.
 
 Você **não mexe no código do plugin**. Toda a configuração é feita criando e editando notas Markdown. O plugin encontra as notas sozinho e as publica como ferramentas MCP para qualquer cliente conectado (Claude Code, Codex, Cursor...).
 
@@ -8,10 +8,10 @@ Você **não mexe no código do plugin**. Toda a configuração é feita criando
 
 1. **Leia este guia inteiro antes de agir.**
 2. **Levante o estado atual antes de perguntar qualquer coisa:**
-   - **confirme que está falando com o servidor deste cofre.** Cada cofre do Obsidian tem o próprio servidor MCP, com nome, porta, segredos e ferramentas próprios. Este guia é do cofre **%VAULT_NAME%**, cujo servidor se chama `%MCP_SERVER_NAME%` (`%SERVER_URL%`). Use só as ferramentas desse servidor (no Claude Code elas aparecem como `mcp__%MCP_SERVER_NAME%__list_vault_tools`, `mcp__%MCP_SERVER_NAME%__list_secrets` etc.). Se o cliente tiver outros servidores `environment-variables…`, ignore-os: são de outros cofres. Se o servidor deste cofre não aparecer, peça ao usuário para conectar o cliente em Obsidian → painel Environment Variables → Clientes de IA;
+   - **confirme que está falando com o servidor do cofre certo.** Cada cofre do Obsidian tem o próprio servidor MCP, com nome, porta, segredos e ferramentas próprios. Os servidores do plugin se chamam `environment-variables` ou `environment-variables-<nome do cofre>` (no Claude Code as ferramentas aparecem como `mcp__<nome do servidor>__list_vault_tools`, `mcp__<nome do servidor>__list_secrets` etc.). Se houver mais de um, pergunte ao usuário qual é o cofre e use só as ferramentas do servidor dele. Se nenhum aparecer, peça ao usuário para conectar o cliente em Obsidian → painel Environment Variables → Clientes de IA e recarregar o cliente;
    - chame `list_vault_tools` para ver as ferramentas e as notas de requisição que já existem, e os problemas delas;
    - chame `list_secrets` para ver os segredos cadastrados (nome, tipo, hosts permitidos, onde podem ser usados). Os valores nunca aparecem;
-   - procure no cofre as notas de serviço, de requisição e de ferramenta que já existem (pelas tags da seção 10) e reaproveite o que der;
+   - procure no cofre as notas de serviço, de requisição e de ferramenta que já existem (pelas tags que `list_vault_tools` informa em `toolTag` e `requestTag`) e reaproveite o que der;
    - leia as convenções do cofre: arquivos de instruções como `CLAUDE.md` ou `AGENTS.md`, notas índice (MOCs), taxonomia de tags e propriedades como `up:`. Siga essas convenções nas notas que criar.
 3. **Se faltar qualquer informação, pergunte ao usuário antes de montar o plano.** Use a lista da seção 3. Faça todas as perguntas de uma vez, numeradas. **Nunca invente valores**: URLs, IDs, nomes de segredos, escopos, nomes de campos ou endpoints que você não confirmou na documentação oficial ou com o usuário.
 4. **Nunca peça, leia, escreva ou registre o valor de um token, senha ou chave.** Se um segredo ainda não existe, o usuário cadastra no painel do plugin no Obsidian (ícone de chave → "Nova variável"). Você só usa o nome dele em placeholders como `{{basic:NOME}}`.
@@ -19,13 +19,14 @@ Você **não mexe no código do plugin**. Toda a configuração é feita criando
 6. **Gere sempre um Plano de Implementação**, no modelo da seção 8, e **espere a aprovação explícita do usuário** antes de criar ou editar qualquer nota. Se o usuário pedir mudanças, atualize o plano e peça aprovação de novo.
 7. **Depois de implementar, valide:** chame `list_vault_tools` até nenhuma ferramenta nova ter `problems`. Teste só ferramentas de leitura. Uma ferramenta que grava dados (`writes: true`) só pode ser executada com autorização explícita do usuário para aquela execução.
 8. **Segredos que permitem qualquer domínio: peça autorização sempre.** Em `list_secrets`, esses segredos aparecem com `allowAnyHost: true`. O plugin não confere para onde eles vão e não abre nenhuma janela de aprovação quando uma ferramenta os usa: **a conferência é sua**. Antes de **cada** execução de uma ferramenta cuja nota de serviço usa um desses segredos (mesmo que seja só leitura, e mesmo em testes), mostre ao usuário o nome do segredo e a URL completa de destino e espere a autorização explícita dele para aquela execução. Nunca execute sem essa resposta, e nunca troque a URL da nota de serviço sem avisar. Ao planejar, prefira pedir ao usuário que troque "qualquer domínio" pelo host exato da API.
-9. **Trabalhe só neste cofre.** Crie e edite notas apenas dentro de `%VAULT_PATH%`: notas em outro cofre não viram ferramentas aqui, e os segredos deste cofre não funcionam em outro. Se o usuário quiser as mesmas ferramentas em outro cofre, elas precisam ser criadas lá, com o guia daquele cofre e os segredos cadastrados nele.
+9. **Trabalhe só no cofre escolhido.** Crie e edite notas apenas dentro do cofre cujo servidor você está usando. Se não souber em que pasta ele está, pergunte ao usuário: nunca suponha um caminho. Notas em outro cofre não viram ferramentas nele, e os segredos de um cofre não funcionam em outro. Se o usuário quiser as mesmas ferramentas em outro cofre, elas precisam ser criadas lá, com o servidor e os segredos daquele cofre.
 10. **Não edite** `data.json`, `vault.enc` nem nada dentro de `.obsidian/`. Não tente contornar as regras de segurança do plugin (hosts permitidos, aprovações, mascaramento).
 
 ## 2. Como o plugin funciona
 
-- O plugin roda dentro do Obsidian e tem **um servidor MCP local por cofre**. O deste cofre se chama `%MCP_SERVER_NAME%` e fica em `%SERVER_URL%`. Cada cofre tem os próprios segredos, tokens de cliente, notas e ferramentas; o token de um cofre é recusado pelo servidor de outro. Com o cofre de segredos bloqueado, as chamadas que usam segredos falham até o usuário desbloquear.
-- O **registro de ferramentas** varre o cofre atrás das notas com a tag de ferramenta (seção 9), valida cada uma e publica as válidas no `tools/list` do MCP. A lista se atualiza sozinha quando uma nota muda. Se o cliente não recarregar a lista, use `run_vault_tool`.
+- O plugin roda dentro do Obsidian e tem **um servidor MCP local por cofre**, em `http://127.0.0.1:<porta>/mcp`. A porta padrão é 27150 e cada cofre usa a sua; o nome do servidor e a porta aparecem no painel do plugin. Cada cofre tem os próprios segredos, tokens de cliente, notas e ferramentas; o token de um cofre é recusado pelo servidor de outro. Com o cofre de segredos bloqueado, as chamadas que usam segredos falham até o usuário desbloquear.
+- **Ferramentas do cofre** e **ferramentas com script** vêm desligadas. O usuário liga em Obsidian → Configurações → Environment Variables → Ferramentas do cofre. `list_vault_tools` informa `enabled` e `scriptsEnabled`, e as ferramentas de gestão (`list_vault_tools`, `run_vault_tool`) só existem com as ferramentas ligadas.
+- O **registro de ferramentas** varre o cofre atrás das notas com a tag de ferramenta (`toolTag`), valida cada uma e publica as válidas no `tools/list` do MCP. A lista se atualiza sozinha quando uma nota muda. Se o cliente não recarregar a lista, use `run_vault_tool`.
 - Os **segredos** ficam cifrados no plugin. As notas só contêm placeholders (`{{secret:NOME}}`, `{{basic:NOME}}`, `{{bearer:NOME}}`), trocados pelo valor real no último momento pelo *broker*, que confere se o host de destino é permitido para aquele segredo e mascara o valor na resposta.
 - O plugin encontra as notas **pelas tags e pelos links**, nunca pela pasta. As notas podem ficar em qualquer lugar do cofre.
 
@@ -54,6 +55,8 @@ Prefira `kind: request`. Use `kind: script` só quando a ferramenta precisar jun
 
 ## 4. Formato das notas
 
+Nos exemplos, `api/request` e `mcp/tool` são as tags padrão do plugin, e `servico/jira` e `modelo` são só ilustrações. Use as tags que `list_vault_tools` informar em `requestTag` e `toolTag` (o usuário pode ter trocado) e as que o cofre já usa para as notas de serviço.
+
 ### 4.1 Nota de serviço
 
 **Uma nota por instância ou conta**, todas com a mesma tag e as mesmas propriedades. Os nomes das propriedades são livres. Se o cofre já tem notas assim (ex.: notas de acesso a instâncias), **use a tag e as propriedades que elas já têm** e só complete o que faltar.
@@ -70,11 +73,11 @@ cloud_id: 1234abcd-...
 Notas livres sobre a conta. Salva como "Jira - ACME"; a instância Globex seria outra nota, "Jira - Globex", com os valores dela.
 ```
 
-### 4.2 Nota de requisição (tag `%REQUEST_TAG%`)
+### 4.2 Nota de requisição (tag de requisição)
 
 ````markdown
 ---
-tags: [%REQUEST_TAG%]
+tags: [api/request]
 ---
 Busca um ticket com os campos pedidos, em qualquer instância.
 
@@ -96,17 +99,17 @@ Regras do bloco ```` ```http ````:
 - Placeholders de segredo só funcionam nos **headers**, a menos que o segredo permita URL ou body. O host da URL nunca pode vir de um placeholder de segredo.
 - Argumentos da IA nunca podem conter placeholders de segredo: o plugin recusa.
 
-### 4.3 Nota de ferramenta, `kind: request` (tag `%TOOL_TAG%`)
+### 4.3 Nota de ferramenta, `kind: request` (tag de ferramenta)
 
 ```markdown
 ---
-tags: [%TOOL_TAG%]
+tags: [mcp/tool]
 tool: jira_get_issue
 kind: request
 request: "[[Jira - Buscar ticket]]"
-service_tag: jira/instancia
+service_tag: servico/jira
 service_param: instancia
-service_exclude_tag: molde
+service_exclude_tag: modelo
 description: Busca um ticket do Jira pela chave, na instância escolhida. Use quando o usuário citar uma chave como ACME-123.
 params:
   key: { type: string, required: true, description: "Chave do ticket, ex.: ACME-123" }
@@ -117,18 +120,18 @@ expose: true
 Documentação livre da ferramenta para humanos.
 ```
 
-Com `service_tag`, o plugin cria sozinho o parâmetro `instancia` (o nome vem de `service_param`), obrigatório, com a lista das instâncias encontradas: as notas com a tag `jira/instancia`, menos as com `molde`. Não declare esse parâmetro em `params`. A chamada fica `jira_get_issue({ instancia: "ACME", key: "ACME-123" })`, e cada `{{service.*}}` da requisição recebe o valor da nota "Jira - ACME". Uma instância nova entra na lista sozinha quando a nota dela é criada.
+Com `service_tag`, o plugin cria sozinho o parâmetro `instancia` (o nome vem de `service_param`), obrigatório, com a lista das instâncias encontradas: as notas com a tag `servico/jira`, menos as com `modelo`. Não declare esse parâmetro em `params`. A chamada fica `jira_get_issue({ instancia: "ACME", key: "ACME-123" })`, e cada `{{service.*}}` da requisição recebe o valor da nota "Jira - ACME". Uma instância nova entra na lista sozinha quando a nota dela é criada.
 
 ### 4.4 Nota de ferramenta, `kind: script`
 
 ````markdown
 ---
-tags: [%TOOL_TAG%]
+tags: [mcp/tool]
 tool: jira_issue_digest
 kind: script
-service_tag: jira/instancia
+service_tag: servico/jira
 service_param: instancia
-service_exclude_tag: molde
+service_exclude_tag: modelo
 description: Resume um ticket, na instância escolhida, com status, responsável e total de comentários.
 params:
   key: { type: string, required: true, description: "Chave do ticket, ex.: ACME-123" }
@@ -162,7 +165,7 @@ export default async function (ctx) {
 | `request` | no `request` | Link para a nota de requisição. |
 | `service_tag` | sim, para ferramentas genéricas | Tag das notas de serviço (uma por instância). O plugin cria o parâmetro que escolhe a instância. |
 | `service_param` | não | Nome desse parâmetro. Padrão `instance`. Use o nome que fizer sentido para o usuário, ex.: `instancia`, `conta`, `workspace`. |
-| `service_exclude_tag` | não | Notas com esta tag ficam fora da lista de instâncias (ex.: moldes). |
+| `service_exclude_tag` | não | Notas com esta tag ficam fora da lista de instâncias (ex.: modelos). |
 | `service` | não | Link para **uma** nota de serviço fixa. Só use quando o serviço tem, e sempre terá, uma única conta. Não pode ser usado junto com `service_tag`. |
 | `params` | não | Mapa `nome: { type, required, description, enum, default }`. `type`: `string`, `number`, `integer`, `boolean`, `object` ou `array`. |
 | `writes` | não | `true` se a ferramenta cria, altera ou apaga dados. Padrão `false`. |
@@ -189,7 +192,7 @@ O bloco ```` ```js ```` precisa exportar a função: `export default async funct
 
 As requisições devolvem `{ status, statusText, ok, headers, json | body, truncated }`, com qualquer segredo já mascarado como `***`.
 
-Limites: o script roda num interpretador JavaScript isolado (QuickJS, em WebAssembly). Não há `fetch`, `import`, `require`, `setTimeout`, DOM nem acesso à rede fora do `ctx`; `console.log` funciona como `ctx.log`. Scripts têm um tempo máximo de execução (%SCRIPT_TIMEOUT% s; o tempo esperando requisições e aprovações não conta) e um limite de memória de 64 MB. Um erro de requisição não interrompe o script: confira `ok` e `status`. Os erros de configuração (nota não encontrada, parâmetro faltando, host não permitido) viram exceções com mensagens explicativas.
+Limites: o script roda num interpretador JavaScript isolado (QuickJS, em WebAssembly). Não há `fetch`, `import`, `require`, `setTimeout`, DOM nem acesso à rede fora do `ctx`; `console.log` funciona como `ctx.log`. Scripts têm um tempo máximo de execução (30 s por padrão, ajustável nas configurações; o tempo esperando requisições e aprovações não conta) e um limite de memória de 64 MB. Um erro de requisição não interrompe o script: confira `ok` e `status`. Os erros de configuração (nota não encontrada, parâmetro faltando, host não permitido) viram exceções com mensagens explicativas.
 
 ## 6. Nomes e descrições que funcionam
 
@@ -216,7 +219,7 @@ Apresente o plano ao usuário exatamente com estas seções e espere a aprovaç�
 O que o usuário vai poder pedir à IA depois desta implementação.
 
 ## 2. Informações confirmadas
-Cofre: %VAULT_NAME% (servidor `%MCP_SERVER_NAME%`). Serviço, instâncias, URL base, documentação usada e as respostas do usuário.
+Cofre e servidor MCP usados. Serviço, instâncias, URL base, documentação usada e as respostas do usuário.
 
 ## 3. Autenticação
 Segredo usado (nome e tipo), se já existe ou se o usuário precisa criar, e os hosts permitidos necessários.
@@ -247,4 +250,4 @@ O que ainda depende do usuário ou pode dar errado.
 4. Teste as ferramentas de leitura com `run_vault_tool` ou pelo nome. Não execute ferramentas `writes: true` sem autorização, nem ferramentas que usam segredos de qualquer domínio sem a autorização da regra 8.
 5. Termine com um resumo: ferramentas criadas, notas criadas, testes feitos e o que o usuário ainda precisa fazer.
 
-Se você não tem acesso ao servidor MCP deste cofre (`%MCP_SERVER_NAME%`), só aos arquivos, ainda pode criar as notas dentro de `%VAULT_PATH%`. Nesse caso peça ao usuário para conferir o status em Obsidian → painel Environment Variables → Ferramentas do cofre.
+Se você não tem acesso ao servidor MCP do cofre, só aos arquivos, ainda pode criar as notas nos arquivos do cofre (pergunte ao usuário em que pasta ele está). Nesse caso peça ao usuário para conferir o status em Obsidian → painel Environment Variables → Ferramentas do cofre.
