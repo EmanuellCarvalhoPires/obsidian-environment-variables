@@ -161,10 +161,18 @@ const claudeCode: Integration = {
 
 // ---------- Codex (config.toml) ----------
 
-export const codexBlockStart = (name: string) => `# >>> ${name} (managed by the Environment Variables Obsidian plugin) >>>`;
+export const codexBlockStart = (name: string) => `# >>> ${name} (managed by the Environment Keys Obsidian plugin) >>>`;
 export const codexBlockEnd = (name: string) => `# <<< ${name} <<<`;
 export const CODEX_BLOCK_START = codexBlockStart(MCP_SERVER_NAME);
 export const CODEX_BLOCK_END = codexBlockEnd(MCP_SERVER_NAME);
+/** Start marker written before the plugin was renamed to Environment Keys. Still recognized so old blocks are replaced, not duplicated. */
+const legacyCodexBlockStart = (name: string) => `# >>> ${name} (managed by the Environment Variables Obsidian plugin) >>>`;
+
+/** Position of our managed block's start marker for `name` (current or legacy), or -1. */
+function codexBlockStartAt(text: string, name: string): number {
+  const start = text.indexOf(codexBlockStart(name));
+  return start >= 0 ? start : text.indexOf(legacyCodexBlockStart(name));
+}
 
 /** Server names only contain [a-z0-9_-], so they are safe inside a regular expression. */
 function unmanagedCodexEntry(name: string): RegExp {
@@ -182,12 +190,11 @@ function tomlString(value: string): string {
 
 /** Removes our managed block for `name`. Returns the text unchanged when there is none. */
 export function removeCodexBlock(text: string, name = MCP_SERVER_NAME): string {
-  const startMarker = codexBlockStart(name);
   const endMarker = codexBlockEnd(name);
-  const start = text.indexOf(startMarker);
+  const start = codexBlockStartAt(text, name);
   if (start < 0) return text;
   const endAt = text.indexOf(endMarker, start);
-  if (endAt < 0) throw new Error("config.toml has an incomplete Environment Variables block. Fix or remove it by hand.");
+  if (endAt < 0) throw new Error("config.toml has an incomplete Environment Keys block. Fix or remove it by hand.");
   let end = endAt + endMarker.length;
   if (text[end] === "\r") end++;
   if (text[end] === "\n") end++;
@@ -215,7 +222,7 @@ export function upsertCodexBlock(text: string, url: string, token: string, name 
 
 /** The token inside our managed block for `name`, or null. */
 export function codexBlockToken(text: string, name = MCP_SERVER_NAME): string | null {
-  const start = text.indexOf(codexBlockStart(name));
+  const start = codexBlockStartAt(text, name);
   if (start < 0) return null;
   const end = text.indexOf(codexBlockEnd(name), start);
   const block = text.slice(start, end < 0 ? undefined : end);

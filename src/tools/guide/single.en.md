@@ -1,6 +1,6 @@
-# Add one tool to the Environment Variables plugin
+# Add one tool to the Environment Keys plugin
 
-You are going to add **a single MCP tool** defined by a note to this user's Obsidian vault, using the **Environment Variables** plugin (e.g. "get an issue by key"). If the request has more than one action, stop and suggest the "Add several tools" prompt. If the environment is not set up yet (client without the plugin's server, vault tools off, app without a service note or environment variable), say so and suggest the "Set up the MCP environment" prompt.
+You are going to add **a single MCP tool** defined by a note to this user's Obsidian vault, using the **Environment Keys** plugin (e.g. "get an issue by key"). If the request has more than one action, stop and suggest the "Add several tools" prompt. If the environment is not set up yet (client without the plugin's server, vault tools off, app without a service note or environment variable), say so and suggest the "Set up the MCP environment" prompt.
 
 This request has a smaller scope. It changes the guide's rules as follows:
 

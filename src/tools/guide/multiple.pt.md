@@ -1,6 +1,6 @@
-# Adicionar várias ferramentas no plugin Environment Variables
+# Adicionar várias ferramentas no plugin Environment Keys
 
-Você vai adicionar **várias ferramentas MCP** definidas por notas ao cofre do Obsidian deste usuário, usando o plugin **Environment Variables** (ex.: "listar, buscar e comentar tickets"). As ferramentas podem ser de um app que já está configurado no cofre ou de um app novo. Se o cliente ainda não tiver o servidor do plugin, ou as ferramentas do cofre estiverem desligadas, avise e sugira o prompt "Setar o ambiente MCP".
+Você vai adicionar **várias ferramentas MCP** definidas por notas ao cofre do Obsidian deste usuário, usando o plugin **Environment Keys** (ex.: "listar, buscar e comentar tickets"). As ferramentas podem ser de um app que já está configurado no cofre ou de um app novo. Se o cliente ainda não tiver o servidor do plugin, ou as ferramentas do cofre estiverem desligadas, avise e sugira o prompt "Setar o ambiente MCP".
 
 Isto muda as regras do guia assim:
 

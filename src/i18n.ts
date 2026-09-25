@@ -1,9 +1,9 @@
 import { getLanguage } from "obsidian";
 
 const en = {
-  "plugin.name": "Environment Variables",
-  "ribbon.locked": "Environment Variables (locked)",
-  "ribbon.unlocked": "Environment Variables (unlocked)",
+  "plugin.name": "Environment Keys",
+  "ribbon.locked": "Environment Keys (locked)",
+  "ribbon.unlocked": "Environment Keys (unlocked)",
   "cmd.open": "Open panel",
   "cmd.lock": "Lock vault",
   "cmd.insert": "Insert variable reference",
@@ -144,11 +144,11 @@ const en = {
 
   "modal.confirm.ok": "Confirm",
   "modal.pick.placeholder": "Choose a variable",
-  "notice.lockedFirst": "Unlock the Environment Variables vault first.",
-  "notice.locked": "Environment Variables: vault locked.",
-  "notice.autoLocked": "Environment Variables: vault locked after inactivity.",
-  "notice.serverError": "Environment Variables server: {error}",
-  "notice.approvalPending": "Environment Variables: a request is waiting for your approval.",
+  "notice.lockedFirst": "Unlock the Environment Keys vault first.",
+  "notice.locked": "Environment Keys: vault locked.",
+  "notice.autoLocked": "Environment Keys: vault locked after inactivity.",
+  "notice.serverError": "Environment Keys server: {error}",
+  "notice.approvalPending": "Environment Keys: a request is waiting for your approval.",
 
   "settings.server": "Local server",
   "settings.serverEnabled": "Enable local server",
@@ -238,8 +238,8 @@ const en = {
 type Key = keyof typeof en;
 
 const ptBR: Partial<Record<Key, string>> = {
-  "ribbon.locked": "Environment Variables (bloqueado)",
-  "ribbon.unlocked": "Environment Variables (desbloqueado)",
+  "ribbon.locked": "Environment Keys (bloqueado)",
+  "ribbon.unlocked": "Environment Keys (desbloqueado)",
   "cmd.open": "Abrir painel",
   "cmd.lock": "Bloquear cofre",
   "cmd.insert": "Inserir referência de variável",
@@ -380,11 +380,11 @@ const ptBR: Partial<Record<Key, string>> = {
 
   "modal.confirm.ok": "Confirmar",
   "modal.pick.placeholder": "Escolha uma variável",
-  "notice.lockedFirst": "Desbloqueie o cofre do Environment Variables primeiro.",
-  "notice.locked": "Environment Variables: cofre bloqueado.",
-  "notice.autoLocked": "Environment Variables: cofre bloqueado por inatividade.",
-  "notice.serverError": "Servidor do Environment Variables: {error}",
-  "notice.approvalPending": "Environment Variables: uma requisição está esperando sua aprovação.",
+  "notice.lockedFirst": "Desbloqueie o cofre do Environment Keys primeiro.",
+  "notice.locked": "Environment Keys: cofre bloqueado.",
+  "notice.autoLocked": "Environment Keys: cofre bloqueado por inatividade.",
+  "notice.serverError": "Servidor do Environment Keys: {error}",
+  "notice.approvalPending": "Environment Keys: uma requisição está esperando sua aprovação.",
 
   "settings.server": "Servidor local",
   "settings.serverEnabled": "Ligar servidor local",
