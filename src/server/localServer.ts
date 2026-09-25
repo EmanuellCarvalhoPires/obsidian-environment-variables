@@ -1,6 +1,7 @@
 import * as http from "http";
 import { clearInterval, setInterval } from "timers";
 import { Broker } from "../engine/broker";
+import { GuideMode, isGuideMode } from "../tools/guide";
 import type { ToolsService } from "../tools/service";
 import { ClientContext } from "./clients";
 import { handleMcpMessage } from "./mcp";
@@ -19,8 +20,8 @@ export interface LocalServerOptions {
   authenticate: (token: string) => Promise<ClientContext | null>;
   /** Vault tools. Optional so the server also works (and is tested) without them. */
   tools?: ToolsService;
-  /** The AI agent guide, with an optional user request appended. */
-  guide?: (request?: string) => string;
+  /** The AI agent guide for the chosen prompt, with an optional user request appended. */
+  guide?: (request?: string, mode?: GuideMode) => string;
   /** Which vault this server belongs to, so another vault can tell whose server holds a port. */
   vault?: { id: string; name: string };
 }
@@ -161,7 +162,8 @@ export class LocalServer {
     if (url.pathname === "/v1/tools/guide" && req.method === "GET") {
       if (!tools?.enabled() || !this.options.guide) return sendJson(res, 404, error("tools_disabled", "Vault tools are turned off in the plugin settings."));
       res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(this.options.guide(url.searchParams.get("request") ?? undefined));
+      const mode = url.searchParams.get("mode");
+      res.end(this.options.guide(url.searchParams.get("request") ?? undefined, isGuideMode(mode) ? mode : undefined));
       return;
     }
     const run = /^\/v1\/tools\/([a-z][a-z0-9_]{0,63})$/.exec(url.pathname);

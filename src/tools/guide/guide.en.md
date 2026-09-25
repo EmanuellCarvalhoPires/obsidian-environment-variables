@@ -1,6 +1,6 @@
-# Guide for AI agents: creating vault tools
+## Plugin reference guide
 
-You are going to configure **MCP tools defined by notes** in this user's Obsidian vault, using the **Environment Variables** plugin. A tool can be a single one (e.g. "get a Jira issue") or a set for an app or service (e.g. "tools for Google Drive").
+Where the instructions before or after this guide change one of its rules, those instructions win.
 
 You **do not change the plugin's code**. All configuration is done by creating and editing Markdown notes. The plugin finds the notes by itself and publishes them as MCP tools to every connected client (Claude Code, Codex, Cursor...).
 
@@ -8,10 +8,10 @@ You **do not change the plugin's code**. All configuration is done by creating a
 
 1. **Read this whole guide before acting.**
 2. **Survey the current state before asking anything:**
-   - **make sure you are talking to this vault's server.** Each Obsidian vault has its own MCP server, with its own name, port, secrets and tools. This guide belongs to the vault **%VAULT_NAME%**, whose server is named `%MCP_SERVER_NAME%` (`%SERVER_URL%`). Only use that server's tools (in Claude Code they show up as `mcp__%MCP_SERVER_NAME%__list_vault_tools`, `mcp__%MCP_SERVER_NAME%__list_secrets` and so on). If the client has other `environment-variables…` servers, ignore them: they belong to other vaults. If this vault's server is missing, ask the user to connect the client in Obsidian → Environment Variables panel → AI clients;
+   - **make sure you are talking to the right vault's server.** Each Obsidian vault has its own MCP server, with its own name, port, secrets and tools. The plugin's servers are named `environment-variables` or `environment-variables-<vault name>` (in Claude Code their tools show up as `mcp__<server name>__list_vault_tools`, `mcp__<server name>__list_secrets` and so on). If there is more than one, ask the user which vault it is and only use that vault's server. If none shows up, ask the user to connect the client in Obsidian → Environment Variables panel → AI clients and reload the client;
    - call `list_vault_tools` to see the existing tools and request notes, and their problems;
    - call `list_secrets` to see the stored secrets (name, type, allowed hosts, where they may be placed). Values are never shown;
-   - search the vault for existing service, request and tool notes (by the tags in section 10) and reuse what you can;
+   - search the vault for existing service, request and tool notes (by the tags `list_vault_tools` reports in `toolTag` and `requestTag`) and reuse what you can;
    - read the vault's conventions: instruction files such as `CLAUDE.md` or `AGENTS.md`, index notes (MOCs), the tag taxonomy and properties such as `up:`. Follow those conventions in the notes you create.
 3. **If any information is missing, ask the user before writing the plan.** Use the list in section 3. Ask all questions at once, numbered. **Never invent values**: URLs, IDs, secret names, scopes, field names or endpoints you have not confirmed in the official documentation or with the user.
 4. **Never ask for, read, write or log the value of a token, password or key.** If a secret does not exist yet, the user creates it in the plugin's panel in Obsidian (key icon → "New variable"). You only use its name in placeholders such as `{{basic:NAME}}`.
@@ -19,13 +19,14 @@ You **do not change the plugin's code**. All configuration is done by creating a
 6. **Always produce an Implementation Plan**, using the template in section 8, and **wait for the user's explicit approval** before creating or editing any note. If the user asks for changes, update the plan and ask for approval again.
 7. **After implementing, validate:** call `list_vault_tools` until no new tool has `problems`. Only test read-only tools. A tool that writes data (`writes: true`) may only run with the user's explicit permission for that run.
 8. **Secrets that allow any host: always ask for permission.** In `list_secrets`, these secrets show `allowAnyHost: true`. The plugin does not check where they go and opens no approval dialog when a tool uses them: **checking is up to you**. Before **every** run of a tool whose service note uses one of these secrets (even read-only, even in tests), show the user the secret name and the full destination URL and wait for their explicit permission for that run. Never run it without that answer, and never change the service note's URL without saying so. When planning, prefer asking the user to replace "any host" with the API's exact host.
-9. **Work in this vault only.** Create and edit notes only inside `%VAULT_PATH%`: notes in another vault do not become tools here, and this vault's secrets do not work in another one. If the user wants the same tools in another vault, they must be created there, with that vault's guide and the secrets stored in it.
+9. **Work in the chosen vault only.** Create and edit notes only inside the vault whose server you are using. If you do not know which folder it is, ask the user: never assume a path. Notes in another vault do not become tools in it, and one vault's secrets do not work in another. If the user wants the same tools in another vault, they must be created there, with that vault's server and secrets.
 10. **Do not edit** `data.json`, `vault.enc` or anything inside `.obsidian/`. Do not try to work around the plugin's security rules (allowed hosts, approvals, masking).
 
 ## 2. How the plugin works
 
-- The plugin runs inside Obsidian and has **one local MCP server per vault**. This vault's server is named `%MCP_SERVER_NAME%` and listens on `%SERVER_URL%`. Each vault has its own secrets, client tokens, notes and tools; one vault's token is refused by another vault's server. While the secret vault is locked, calls that use secrets fail until the user unlocks it.
-- The **tool registry** scans the vault for notes with the tool tag (section 10), validates each one and publishes the valid ones in MCP `tools/list`. The list updates by itself when a note changes. If the client does not reload the list, use `run_vault_tool`.
+- The plugin runs inside Obsidian and has **one local MCP server per vault**, at `http://127.0.0.1:<port>/mcp`. The default port is 27150 and each vault uses its own; the server name and the port are shown in the plugin's panel. Each vault has its own secrets, client tokens, notes and tools; one vault's token is refused by another vault's server. While the secret vault is locked, calls that use secrets fail until the user unlocks it.
+- **Vault tools** and **script tools** are off by default. The user turns them on in Obsidian → Settings → Environment Variables → Vault tools. `list_vault_tools` reports `enabled` and `scriptsEnabled`, and the management tools (`list_vault_tools`, `run_vault_tool`) only exist while vault tools are on.
+- The **tool registry** scans the vault for notes with the tool tag (`toolTag`), validates each one and publishes the valid ones in MCP `tools/list`. The list updates by itself when a note changes. If the client does not reload the list, use `run_vault_tool`.
 - **Secrets** are encrypted inside the plugin. Notes only hold placeholders (`{{secret:NAME}}`, `{{basic:NAME}}`, `{{bearer:NAME}}`), replaced with the real value at the last moment by the *broker*, which checks that the destination host is allowed for that secret and masks the value in the response.
 - The plugin finds notes **by tags and links, never by folder**. Notes can live anywhere in the vault.
 
@@ -54,6 +55,8 @@ Prefer `kind: request`. Use `kind: script` only when the tool needs to combine s
 
 ## 4. Note formats
 
+In the examples, `api/request` and `mcp/tool` are the plugin's default tags, and `service/jira` and `template` are only illustrations. Use the tags `list_vault_tools` reports in `requestTag` and `toolTag` (the user may have changed them) and the ones the vault already uses for service notes.
+
 ### 4.1 Service note
 
 **One note per instance or account**, all with the same tag and the same properties. Property names are free. If the vault already has such notes (e.g. notes describing access to an instance), **use the tag and properties they already have** and only add what is missing.
@@ -70,11 +73,11 @@ cloud_id: 1234abcd-...
 Free notes about the account. Saved as "Jira - ACME"; the Globex instance would be another note, "Jira - Globex", with its own values.
 ```
 
-### 4.2 Request note (tag `%REQUEST_TAG%`)
+### 4.2 Request note (request tag)
 
 ````markdown
 ---
-tags: [%REQUEST_TAG%]
+tags: [api/request]
 ---
 Gets an issue with the requested fields, on any instance.
 
@@ -96,15 +99,15 @@ Rules of the ```` ```http ```` block:
 - Secret placeholders only work in **headers**, unless the secret allows the URL or the body. The URL host can never come from a secret placeholder.
 - Arguments from the AI may never contain secret placeholders: the plugin refuses them.
 
-### 4.3 Tool note, `kind: request` (tag `%TOOL_TAG%`)
+### 4.3 Tool note, `kind: request` (tool tag)
 
 ```markdown
 ---
-tags: [%TOOL_TAG%]
+tags: [mcp/tool]
 tool: jira_get_issue
 kind: request
 request: "[[Jira - Get issue]]"
-service_tag: jira/instance
+service_tag: service/jira
 service_param: instance
 service_exclude_tag: template
 description: Gets a Jira issue by key, on the chosen instance. Use when the user mentions a key such as ACME-123.
@@ -117,16 +120,16 @@ expose: true
 Free documentation of the tool for humans.
 ```
 
-With `service_tag`, the plugin creates the `instance` parameter by itself (its name comes from `service_param`), required, with the list of instances found: the notes tagged `jira/instance`, minus those tagged `template`. Do not declare that parameter in `params`. The call becomes `jira_get_issue({ instance: "ACME", key: "ACME-123" })`, and every `{{service.*}}` of the request gets the value from the note "Jira - ACME". A new instance joins the list by itself when its note is created.
+With `service_tag`, the plugin creates the `instance` parameter by itself (its name comes from `service_param`), required, with the list of instances found: the notes tagged `service/jira`, minus those tagged `template`. Do not declare that parameter in `params`. The call becomes `jira_get_issue({ instance: "ACME", key: "ACME-123" })`, and every `{{service.*}}` of the request gets the value from the note "Jira - ACME". A new instance joins the list by itself when its note is created.
 
 ### 4.4 Tool note, `kind: script`
 
 ````markdown
 ---
-tags: [%TOOL_TAG%]
+tags: [mcp/tool]
 tool: jira_issue_digest
 kind: script
-service_tag: jira/instance
+service_tag: service/jira
 service_param: instance
 service_exclude_tag: template
 description: Summarizes an issue, on the chosen instance, with status, assignee and number of comments.
@@ -189,7 +192,7 @@ The ```` ```js ```` block must export the function: `export default async functi
 
 Requests return `{ status, statusText, ok, headers, json | body, truncated }`, with any secret already masked as `***`.
 
-Limits: the script runs in an isolated JavaScript interpreter (QuickJS, in WebAssembly). There is no `fetch`, `import`, `require`, `setTimeout`, DOM or network access outside `ctx`; `console.log` works like `ctx.log`. Scripts have a maximum run time (%SCRIPT_TIMEOUT% s; time spent waiting for requests and approvals does not count) and a 64 MB memory limit. An HTTP error does not stop the script: check `ok` and `status`. Configuration errors (note not found, missing parameter, host not allowed) become exceptions with explanatory messages.
+Limits: the script runs in an isolated JavaScript interpreter (QuickJS, in WebAssembly). There is no `fetch`, `import`, `require`, `setTimeout`, DOM or network access outside `ctx`; `console.log` works like `ctx.log`. Scripts have a maximum run time (30 s by default, adjustable in the settings; time spent waiting for requests and approvals does not count) and a 64 MB memory limit. An HTTP error does not stop the script: check `ok` and `status`. Configuration errors (note not found, missing parameter, host not allowed) become exceptions with explanatory messages.
 
 ## 6. Names and descriptions that work
 
@@ -216,7 +219,7 @@ Present the plan to the user with exactly these sections and wait for approval:
 What the user will be able to ask the AI after this implementation.
 
 ## 2. Confirmed information
-Vault: %VAULT_NAME% (server `%MCP_SERVER_NAME%`). Service, instances, base URL, documentation used and the user's answers.
+Vault and MCP server used. Service, instances, base URL, documentation used and the user's answers.
 
 ## 3. Authentication
 Secret used (name and type), whether it exists or the user must create it, and the allowed hosts needed.
@@ -247,4 +250,4 @@ What still depends on the user or may go wrong.
 4. Test the read-only tools with `run_vault_tool` or by name. Do not run `writes: true` tools without permission, nor tools that use any-host secrets without the permission of rule 8.
 5. Finish with a summary: tools created, notes created, tests done and what the user still has to do.
 
-If you do not have access to this vault's MCP server (`%MCP_SERVER_NAME%`), only to the files, you can still create the notes inside `%VAULT_PATH%`. In that case ask the user to check the status in Obsidian → Environment Variables panel → Vault tools.
+If you do not have access to the vault's MCP server, only to the files, you can still create the notes in the vault's files (ask the user which folder it is). In that case ask the user to check the status in Obsidian → Environment Variables panel → Vault tools.

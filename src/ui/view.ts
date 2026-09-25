@@ -8,6 +8,7 @@ import { SecretRecord } from "../store/types";
 import { wildcardRisk } from "../engine/hosts";
 import { accessOf, ClientAccess, ClientRecord } from "../server/clients";
 import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal } from "./modals";
+import { GUIDE_MODES, GuideMode } from "../tools/guide";
 import { ToolEntry } from "../tools/types";
 import { ToolRunModal } from "./toolModals";
 
@@ -23,7 +24,7 @@ export class EnvironmentVariablesView extends ItemView {
   private error = "";
   private clientsOpen: boolean | undefined;
   private toolsOpen: boolean | undefined;
-  private guideVisible = false;
+  private guideVisible: GuideMode | null = null;
   private connecting: IntegrationId | null = null;
   private detected = new Map<IntegrationId, boolean>();
 
@@ -269,18 +270,11 @@ export class EnvironmentVariablesView extends ItemView {
       cls: "ev-muted",
     });
 
-    // The prompt for AI agents: how the tools work and the mandatory plan-first workflow.
+    // The prompts for AI agents: how the tools work and the mandatory plan-first workflow, one per task.
     details.createEl("h6", { text: t("view.tools.guideTitle"), cls: "ev-subtitle" });
     details.createEl("p", { text: t("view.tools.guideBody"), cls: "ev-muted" });
-    const guideActions = details.createDiv({ cls: "ev-tool-actions" });
-    const copy = guideActions.createEl("button", { text: t("view.tools.copyGuide"), cls: "mod-cta" });
-    copy.addEventListener("click", () => this.plugin.copyAgentGuide());
-    const toggle = guideActions.createEl("button", { text: this.guideVisible ? t("view.tools.hideGuide") : t("view.tools.showGuide") });
-    toggle.addEventListener("click", () => {
-      this.guideVisible = !this.guideVisible;
-      this.render();
-    });
-    if (this.guideVisible) details.createEl("pre", { text: this.plugin.agentGuide(), cls: "ev-tool-guide" });
+    const prompts = details.createDiv({ cls: "ev-list" });
+    for (const mode of GUIDE_MODES) this.renderPrompt(prompts, mode);
 
     details.createEl("h6", { text: t("view.tools.listTitle"), cls: "ev-subtitle" });
     if (entries.length === 0) {
@@ -289,6 +283,23 @@ export class EnvironmentVariablesView extends ItemView {
     }
     const list = details.createDiv({ cls: "ev-list" });
     for (const entry of entries) this.renderTool(list, entry);
+  }
+
+  private renderPrompt(list: HTMLElement, mode: GuideMode): void {
+    const item = list.createDiv({ cls: "ev-item ev-prompt" });
+    const top = item.createDiv({ cls: "ev-item-top" });
+    top.createSpan({ text: t(`view.tools.prompt.${mode}`), cls: "ev-prompt-name" });
+    const actions = top.createDiv({ cls: "ev-tool-actions" });
+    const copy = actions.createEl("button", { text: t("view.tools.copyGuide"), cls: "mod-cta" });
+    copy.addEventListener("click", () => this.plugin.copyAgentGuide(mode));
+    const shown = this.guideVisible === mode;
+    const toggle = actions.createEl("button", { text: shown ? t("view.tools.hideGuide") : t("view.tools.showGuide") });
+    toggle.addEventListener("click", () => {
+      this.guideVisible = shown ? null : mode;
+      this.render();
+    });
+    item.createDiv({ text: t(`view.tools.prompt.${mode}Desc`), cls: "ev-muted" });
+    if (shown) item.createEl("pre", { text: this.plugin.agentGuide(undefined, mode), cls: "ev-tool-guide" });
   }
 
   private renderTool(list: HTMLElement, entry: ToolEntry): void {

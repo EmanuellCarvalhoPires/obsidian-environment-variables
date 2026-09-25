@@ -5,6 +5,7 @@ import { Broker, BrokerSuccess } from "../engine/broker";
 import { RequestInput } from "../engine/prepare";
 import { ClientContext } from "../server/clients";
 import { inputSchema, validateArgs } from "./definition";
+import { GUIDE_MODES, GuideMode, isGuideMode } from "./guide";
 import { ToolRegistry } from "./registry";
 import { parseRequestBlock, resolveRequest } from "./requestNote";
 import { ScriptRunner } from "./scriptRunner";
@@ -26,8 +27,8 @@ export interface ToolsDeps {
   runner: ScriptRunner;
   audit: AuditLog;
   settings: () => ToolsSettings;
-  /** The authoring guide for AI agents, in the user's language. */
-  guide: () => string;
+  /** The authoring guide for AI agents, in the user's language, for the chosen prompt. */
+  guide: (mode?: GuideMode) => string;
 }
 
 export interface McpToolDefinition {
@@ -51,8 +52,13 @@ export const META_TOOLS: McpToolDefinition[] = [
     title: "Guide: how to create vault tools",
     description:
       "Read this before creating, changing or explaining vault tools (MCP tools defined by notes in the user's Obsidian vault, e.g. a set of tools for Google Drive or Jira). " +
-      "Explains the note formats, the rules, and the mandatory workflow: ask the user for missing information, then write an implementation plan and wait for approval.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      "Explains the note formats, the rules, and the mandatory workflow: ask the user for missing information, then write an implementation plan and wait for approval. " +
+      "mode: setup (set up the MCP environment for an app: service notes, secrets and tools; the default), single (add one tool) or multiple (add several tools).",
+    inputSchema: {
+      type: "object",
+      properties: { mode: { type: "string", enum: GUIDE_MODES, default: "setup" } },
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -112,7 +118,7 @@ export class ToolsService {
 
   async callMcp(name: string, args: Record<string, unknown>, client: ClientContext): Promise<McpCallOutput> {
     try {
-      if (name === "get_tool_authoring_guide") return { text: this.deps.guide(), isError: false };
+      if (name === "get_tool_authoring_guide") return { text: this.deps.guide(isGuideMode(args.mode) ? args.mode : undefined), isError: false };
       if (name === "list_vault_tools") return { value: this.status(), isError: false };
       if (name === "run_vault_tool") {
         if (typeof args.name !== "string") throw new ToolError("invalid_argument", "name is required.");
