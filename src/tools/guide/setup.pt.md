@@ -1,15 +1,15 @@
-# Setar o ambiente MCP do plugin Environment Variables
+# Setar o ambiente MCP do plugin Environment Keys
 
-Você vai configurar, do zero, o ambiente MCP do plugin **Environment Variables** do Obsidian no computador deste usuário. O objetivo é deixar tudo pronto para ele usar as funcionalidades do plugin: o cliente de IA conectado ao servidor do cofre, as variáveis de ambiente (segredos) necessárias, as notas de serviço, de requisição e de ferramenta de um app ou serviço, e as ferramentas MCP validadas.
+Você vai configurar, do zero, o ambiente MCP do plugin **Environment Keys** do Obsidian no computador deste usuário. O objetivo é deixar tudo pronto para ele usar as funcionalidades do plugin: o cliente de IA conectado ao servidor do cofre, as variáveis de ambiente (segredos) necessárias, as notas de serviço, de requisição e de ferramenta de um app ou serviço, e as ferramentas MCP validadas.
 
 ## Etapas do ambiente
 
 Siga nesta ordem. As ações marcadas como **usuário** são feitas por ele no Obsidian: explique o caminho e espere ele confirmar.
 
-1. **Plugin instalado e ativo (usuário).** Obsidian → Configurações → Plugins da comunidade → Environment Variables ligado. O cofre de segredos precisa estar criado e desbloqueado (painel Environment Variables, ícone de chave na barra lateral).
+1. **Plugin instalado e ativo (usuário).** Obsidian → Configurações → Plugins da comunidade → Environment Keys ligado. O cofre de segredos precisa estar criado e desbloqueado (painel Environment Keys, ícone de chave na barra lateral).
 2. **Cliente de IA conectado (usuário).** No painel do plugin → Clientes de IA → **Conectar** no seu cliente (Claude Code, Codex, Cursor...). Isso liga o servidor local e registra o servidor MCP no cliente, sem token para copiar. Depois o cliente precisa ser recarregado. Se o cliente não estiver na lista, use "Outro cliente (configuração manual)".
 3. **Servidor certo.** Encontre o servidor MCP do plugin nas suas ferramentas (regra 2 do guia). Se houver mais de um, pergunte qual é o cofre. Chame `list_secrets` e, se existir, `list_vault_tools`.
-4. **Ferramentas do cofre ligadas (usuário).** Se `list_vault_tools` não existir, ou informar `enabled: false`, peça para ligar em Configurações → Environment Variables → Ferramentas do cofre. Ferramentas com script só são necessárias se o plano usar `kind: script`.
+4. **Ferramentas do cofre ligadas (usuário).** Se `list_vault_tools` não existir, ou informar `enabled: false`, peça para ligar em Configurações → Environment Keys → Ferramentas do cofre. Ferramentas com script só são necessárias se o plano usar `kind: script`.
 5. **Convenções do cofre.** Leia os arquivos de instruções (`CLAUDE.md`, `AGENTS.md`), as notas índice (MOCs), a taxonomia de tags e propriedades como `up:`, e siga essas convenções nas notas que criar.
 6. **Pergunta obrigatória.** Faça a pergunta do final deste prompt e espere a resposta.
 7. **Plano de Implementação** no modelo da seção 8 do guia, incluindo: cada variável de ambiente que o usuário vai cadastrar (nome, tipo e hosts permitidos), as notas de serviço (uma por instância), as notas de requisição, as notas de ferramenta e onde elas entram no cofre (nota índice, `up:`, tags). Espere a aprovação explícita.

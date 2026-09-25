@@ -8,7 +8,7 @@ You **do not change the plugin's code**. All configuration is done by creating a
 
 1. **Read this whole guide before acting.**
 2. **Survey the current state before asking anything:**
-   - **make sure you are talking to the right vault's server.** Each Obsidian vault has its own MCP server, with its own name, port, secrets and tools. The plugin's servers are named `environment-variables` or `environment-variables-<vault name>` (in Claude Code their tools show up as `mcp__<server name>__list_vault_tools`, `mcp__<server name>__list_secrets` and so on). If there is more than one, ask the user which vault it is and only use that vault's server. If none shows up, ask the user to connect the client in Obsidian → Environment Variables panel → AI clients and reload the client;
+   - **make sure you are talking to the right vault's server.** Each Obsidian vault has its own MCP server, with its own name, port, secrets and tools. The plugin's servers are named `environment-variables` or `environment-variables-<vault name>` (in Claude Code their tools show up as `mcp__<server name>__list_vault_tools`, `mcp__<server name>__list_secrets` and so on). If there is more than one, ask the user which vault it is and only use that vault's server. If none shows up, ask the user to connect the client in Obsidian → Environment Keys panel → AI clients and reload the client;
    - call `list_vault_tools` to see the existing tools and request notes, and their problems;
    - call `list_secrets` to see the stored secrets (name, type, allowed hosts, where they may be placed). Values are never shown;
    - search the vault for existing service, request and tool notes (by the tags `list_vault_tools` reports in `toolTag` and `requestTag`) and reuse what you can;
@@ -25,7 +25,7 @@ You **do not change the plugin's code**. All configuration is done by creating a
 ## 2. How the plugin works
 
 - The plugin runs inside Obsidian and has **one local MCP server per vault**, at `http://127.0.0.1:<port>/mcp`. The default port is 27150 and each vault uses its own; the server name and the port are shown in the plugin's panel. Each vault has its own secrets, client tokens, notes and tools; one vault's token is refused by another vault's server. While the secret vault is locked, calls that use secrets fail until the user unlocks it.
-- **Vault tools** and **script tools** are off by default. The user turns them on in Obsidian → Settings → Environment Variables → Vault tools. `list_vault_tools` reports `enabled` and `scriptsEnabled`, and the management tools (`list_vault_tools`, `run_vault_tool`) only exist while vault tools are on.
+- **Vault tools** and **script tools** are off by default. The user turns them on in Obsidian → Settings → Environment Keys → Vault tools. `list_vault_tools` reports `enabled` and `scriptsEnabled`, and the management tools (`list_vault_tools`, `run_vault_tool`) only exist while vault tools are on.
 - The **tool registry** scans the vault for notes with the tool tag (`toolTag`), validates each one and publishes the valid ones in MCP `tools/list`. The list updates by itself when a note changes. If the client does not reload the list, use `run_vault_tool`.
 - **Secrets** are encrypted inside the plugin. Notes only hold placeholders (`{{secret:NAME}}`, `{{basic:NAME}}`, `{{bearer:NAME}}`), replaced with the real value at the last moment by the *broker*, which checks that the destination host is allowed for that secret and masks the value in the response.
 - The plugin finds notes **by tags and links, never by folder**. Notes can live anywhere in the vault.
@@ -265,4 +265,4 @@ What still depends on the user or may go wrong.
 4. Test the read-only tools with `run_vault_tool` or by name. Do not run `writes: true` tools without permission, nor tools that use any-host secrets without the permission of rule 8.
 5. Finish with a summary: tools created, notes created, tests done and what the user still has to do.
 
-If you do not have access to the vault's MCP server, only to the files, you can still create the notes in the vault's files (ask the user which folder it is). In that case ask the user to check the status in Obsidian → Environment Variables panel → Vault tools.
+If you do not have access to the vault's MCP server, only to the files, you can still create the notes in the vault's files (ask the user which folder it is). In that case ask the user to check the status in Obsidian → Environment Keys panel → Vault tools.

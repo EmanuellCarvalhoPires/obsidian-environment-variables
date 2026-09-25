@@ -1,14 +1,14 @@
-# Environment Variables
+# Environment Keys
 
 **English**
 
-Environment Variables keeps your API tokens, passwords and other sensitive values encrypted inside your Obsidian vault, and lets AI agents such as Claude Code, Codex and Cursor use them without ever seeing them. Your notes refer to each value only by its name, and the plugin fills in the real value at the last moment, only for the websites you allowed.
+Environment Keys keeps your API tokens, passwords and other sensitive values encrypted inside your Obsidian vault, and lets AI agents such as Claude Code, Codex and Cursor use them without ever seeing them. Your notes refer to each value only by its name, and the plugin fills in the real value at the last moment, only for the websites you allowed.
 
 The plugin also turns your vault into a local MCP server: you describe API calls and tools in ordinary notes, and every connected AI agent can use them right away, with your AI client asking for your permission before it runs them. Everything runs on your computer, with no external service in between.
 
 **Português (PT-BR)**
 
-O Environment Variables guarda os seus tokens de API, senhas e outros dados sensíveis cifrados dentro do cofre do Obsidian e deixa que agentes de IA, como o Claude Code, o Codex e o Cursor, usem esses dados sem nunca vê-los. As suas notas citam cada valor só pelo nome, e o plugin coloca o valor real no último momento, apenas nos sites que você autorizou.
+O Environment Keys guarda os seus tokens de API, senhas e outros dados sensíveis cifrados dentro do cofre do Obsidian e deixa que agentes de IA, como o Claude Code, o Codex e o Cursor, usem esses dados sem nunca vê-los. As suas notas citam cada valor só pelo nome, e o plugin coloca o valor real no último momento, apenas nos sites que você autorizou.
 
 O plugin também transforma o seu cofre num servidor MCP local: você descreve chamadas de API e ferramentas em notas comuns, e qualquer agente de IA conectado passa a usá-las na hora, com o seu cliente de IA pedindo a sua permissão antes de executá-las. Tudo roda no seu computador, sem nenhum serviço externo no meio.
 
@@ -20,18 +20,18 @@ Store API tokens and environment variables encrypted inside your vault, referenc
 
 Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (Claude Code, Claude Desktop, Cursor, or any MCP client) needs to call an API, it sends the request to this plugin with the key. The plugin replaces the key with the real value right before sending, checks that the destination is allowed, masks the value in the response, and returns the result.
 
-> Available in English and Brazilian Portuguese. The language follows Obsidian's, or choose it in **Settings → Environment Variables → Language**.
+> Available in English and Brazilian Portuguese. The language follows Obsidian's, or choose it in **Settings → Environment Keys → Language**.
 
 > Desktop only, Obsidian 1.13 or later. The plugin runs a local server, which needs Node.js APIs that are not available on mobile.
 
 ## Installation
 
-- **Community plugins:** in Obsidian, open **Settings → Community plugins → Browse**, search for **Environment Variables**, install and enable it.
+- **Community plugins:** in Obsidian, open **Settings → Community plugins → Browse**, search for **Environment Keys**, install and enable it.
 - **Manual:** download `main.js`, `manifest.json` and `styles.css` from the [latest release](../../releases/latest) into `<vault>/.obsidian/plugins/environment-variables/`, then enable the plugin in **Settings → Community plugins**.
 
 ## How it works
 
-1. Click the key icon in the left ribbon to open the **Environment Variables** panel.
+1. Click the key icon in the left ribbon to open the **Environment Keys** panel.
 2. Create a master password. Your variables are encrypted with it.
 3. Add a variable: a name (`JIRA_ACME`), a type, the value and the **allowed hosts** (`acme.atlassian.net`).
 4. In your notes, write `{{basic:JIRA_ACME}}` instead of the token. Type `{{secret:` to autocomplete names, in the note text or in a property value, even while the vault is locked. Keys are shown as a lock chip in reading view and in the Properties panel; click a chip in Properties to edit it. A chip turns red when the name does not exist in the unlocked vault.
@@ -91,7 +91,7 @@ curl -s http://127.0.0.1:27150/v1/request \
 
 ## Vault tools
 
-Turn on **Settings → Environment Variables → Vault tools** and every note tagged `#mcp/tool` (configurable) becomes an MCP tool for all connected AI clients. Nothing is written in code: tools are notes, and the plugin finds them by tag and link, never by folder. The list updates by itself when a note changes (`notifications/tools/list_changed`).
+Turn on **Settings → Environment Keys → Vault tools** and every note tagged `#mcp/tool` (configurable) becomes an MCP tool for all connected AI clients. Nothing is written in code: tools are notes, and the plugin finds them by tag and link, never by folder. The list updates by itself when a note changes (`notifications/tools/list_changed`).
 
 There are three kinds of notes:
 

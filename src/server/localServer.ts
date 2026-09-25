@@ -140,7 +140,7 @@ export class LocalServer {
     const client = await this.authenticate(req);
     if (!client) {
       res.setHeader("WWW-Authenticate", 'Bearer realm="environment-variables"');
-      return sendJson(res, 401, error("unauthorized", "Missing or invalid client token. Create one in Obsidian: Environment Variables > AI clients."));
+      return sendJson(res, 401, error("unauthorized", "Missing or invalid client token. Create one in Obsidian: Environment Keys > AI clients."));
     }
 
     const broker = this.options.broker;

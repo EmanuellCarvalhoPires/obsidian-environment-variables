@@ -159,6 +159,22 @@ describe("one server name per vault", () => {
     }
   });
 
+  it("replaces a block written before the rename to Environment Keys", () => {
+    const legacy = [
+      `# >>> ${MCP_SERVER_NAME} (managed by the Environment Variables Obsidian plugin) >>>`,
+      `[mcp_servers.${MCP_SERVER_NAME}]`,
+      `url = "http://127.0.0.1:27150/mcp"`,
+      `http_headers = { "Authorization" = "Bearer evc_old" }`,
+      `# <<< ${MCP_SERVER_NAME} <<<`,
+      "",
+    ].join("\n");
+    expect(codexBlockToken(legacy)).toBe("evc_old");
+    const out = upsertCodexBlock(legacy, URL_, TOKEN);
+    expect(out).not.toContain("Environment Variables");
+    expect(out.split(`[mcp_servers.${MCP_SERVER_NAME}]`).length).toBe(2);
+    expect(codexBlockToken(out)).toBe(TOKEN);
+  });
+
   it("keeps one Codex block per vault and removes only the right one", () => {
     const both = upsertCodexBlock(upsertCodexBlock("", "http://127.0.0.1:27150/mcp", TOKEN, A), "http://127.0.0.1:27151/mcp", TOKEN_B, B);
     expect(codexBlockToken(both, A)).toBe(TOKEN);

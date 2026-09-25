@@ -170,7 +170,7 @@ export class ToolsService {
 
   /** Runs a tool. Throws ToolError with a message the AI can act on. */
   async run(name: string, rawArgs: unknown, client: ClientContext): Promise<unknown> {
-    if (!this.enabled()) throw new ToolError("tools_disabled", "Vault tools are turned off. The user can turn them on in Obsidian: Settings > Environment Variables > Vault tools.");
+    if (!this.enabled()) throw new ToolError("tools_disabled", "Vault tools are turned off. The user can turn them on in Obsidian: Settings > Environment Keys > Vault tools.");
     const entry = this.deps.registry.get(name);
     if (!entry) throw new ToolError("unknown_tool", `There is no vault tool named "${name}". Call list_vault_tools to see the available tools.`);
     try {
@@ -194,7 +194,7 @@ export class ToolsService {
 
   private async execute(entry: ToolEntry, rawArgs: unknown, client: ClientContext): Promise<unknown> {
     if (entry.status === "invalid") throw new ToolError("invalid_tool", `Tool "${entry.name}" in ${entry.notePath} has problems: ${entry.problems.join(" ")}`);
-    if (entry.status === "scripts-disabled") throw new ToolError("scripts_disabled", "Script tools are turned off. The user can turn them on in Obsidian: Settings > Environment Variables > Vault tools.");
+    if (entry.status === "scripts-disabled") throw new ToolError("scripts_disabled", "Script tools are turned off. The user can turn them on in Obsidian: Settings > Environment Keys > Vault tools.");
     const checked = validateArgs(entry.params, rawArgs);
     if (!checked.ok) throw new ToolError("invalid_argument", checked.message);
 
