@@ -175,6 +175,21 @@ export default async function (ctx) {
 
 Outras propriedades do cofre (`tags`, `up`, `aliases`...) podem ficar na nota normalmente.
 
+### 4.6 Nomes das notas
+
+Use estes padrões ao criar notas, a menos que o cofre já tenha outro padrão para o mesmo app. Nesse caso, siga o do cofre.
+
+| Nota | Nome do arquivo | Exemplo |
+| --- | --- | --- |
+| Ferramenta | Igual ao valor de `tool:` | `jira_get_issue` |
+| Requisição | `<App> - <ação>` | `Jira - Buscar ticket` |
+| Serviço | `<App> - <instância>` | `Jira - Acme` |
+| Índice do app | `<App>` | `Jira` |
+
+- Nas notas de serviço, a parte depois do último separador vira o valor que a IA escolhe na chamada: "Jira - Acme" e "Jira - Globex" viram `Acme` e `Globex`. Use o mesmo prefixo em todas as notas de serviço do app.
+- Não use no nome caracteres que o Windows não aceita: `\ / : * ? " < > |`.
+- Mostre os nomes das notas no plano antes de criá-las.
+
 ## 5. API dos scripts (`ctx`)
 
 O bloco ```` ```js ```` precisa exportar a função: `export default async function (ctx) { ... }`. O `return` vira o resultado da ferramenta e precisa ser serializável em JSON.
