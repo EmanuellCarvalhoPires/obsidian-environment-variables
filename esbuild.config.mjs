@@ -24,6 +24,8 @@ const context = await esbuild.context({
     ...builtinModules,
     ...builtinModules.map((m) => `node:${m}`),
   ],
+  // The AI agent guide (src/tools/guide/*.md) is bundled as text.
+  loader: { ".md": "text" },
   format: "cjs",
   target: "es2022",
   logLevel: "info",

@@ -337,6 +337,8 @@ export class ClientTokenModal extends Modal {
     private readonly token: string,
     private readonly port: number,
     private readonly serverRunning: boolean,
+    /** This vault's MCP server name, so the command does not replace another vault's entry. */
+    private readonly serverName: string,
   ) {
     super(app);
   }
@@ -347,7 +349,7 @@ export class ClientTokenModal extends Modal {
     contentEl.createEl("p", { text: t("modal.client.body") });
     this.codeRow(this.token, t("modal.client.copy"));
     contentEl.createEl("p", { text: t("modal.client.claude") });
-    const command = `claude mcp add --transport http environment-variables http://127.0.0.1:${this.port}/mcp --header "Authorization: Bearer ${this.token}"`;
+    const command = `claude mcp add --transport http ${this.serverName} http://127.0.0.1:${this.port}/mcp --header "Authorization: Bearer ${this.token}"`;
     this.codeRow(command, t("modal.client.copyCommand"));
     if (!this.serverRunning) contentEl.createEl("p", { text: t("modal.client.serverOff"), cls: "ev-warning" });
   }
