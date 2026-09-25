@@ -3,6 +3,8 @@ import { hasTag, linkTarget, normalizeTag, NoteSource, VaultNote } from "../src/
 /** An in-memory vault: notes found by tag and by name, like the Obsidian source. */
 export class MemorySource implements NoteSource {
   private notes = new Map<string, { note: VaultNote; body: string }>();
+  /** Paths passed to read(), in order. */
+  reads: string[] = [];
 
   add(path: string, frontmatter: Record<string, unknown>, body = ""): VaultNote {
     const name = path.split("/").pop()!.replace(/\.md$/, "");
@@ -21,6 +23,10 @@ export class MemorySource implements NoteSource {
     return [...this.notes.values()].map((n) => n.note).filter((n) => hasTag(n.tags, tag));
   }
 
+  get(path: string): VaultNote | undefined {
+    return this.notes.get(path)?.note;
+  }
+
   resolve(ref: string): VaultNote | undefined {
     const target = linkTarget(ref);
     for (const { note } of this.notes.values()) {
@@ -30,6 +36,7 @@ export class MemorySource implements NoteSource {
   }
 
   async read(note: VaultNote): Promise<string> {
+    this.reads.push(note.path);
     const found = this.notes.get(note.path);
     if (!found) throw new Error("gone");
     return found.body;

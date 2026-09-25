@@ -157,6 +157,7 @@ export class LocalServer {
     const tools = this.options.tools;
     if (url.pathname === "/v1/tools" && req.method === "GET") {
       if (!tools?.enabled()) return sendJson(res, 404, error("tools_disabled", "Vault tools are turned off in the plugin settings."));
+      await tools.ready();
       return sendJson(res, 200, { ok: true, ...tools.status() });
     }
     if (url.pathname === "/v1/tools/guide" && req.method === "GET") {

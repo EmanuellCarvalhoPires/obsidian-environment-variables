@@ -27,12 +27,21 @@ export function serviceChoices(notes: VaultNote[]): ServiceChoice[] {
   return sorted.map((n, i) => ({ id: unique ? ids[i] : n.name, notePath: n.path, noteName: n.name }));
 }
 
+function choiceKey(e: ToolEntry): string {
+  return `${e.serviceTag ?? ""}|${e.serviceExcludeTag ?? ""}`;
+}
+
 export interface RegistryOptions {
   enabled: boolean;
   toolTag: string;
   scriptsEnabled: boolean;
 }
 
+/**
+ * Keeps the tool list up to date by reading only the notes that matter to it:
+ * tool notes (toolTag) and the instance notes of generic tools (serviceTag).
+ * Other notes are ignored, so editing them costs nothing.
+ */
 export class ToolRegistry {
   private entries: ToolEntry[] = [];
   private listeners = new Set<() => void>();
@@ -40,28 +49,91 @@ export class ToolRegistry {
   private pending = false;
   private signature = "";
 
+  /** Parsed tool notes by path, before duplicates, instances and statuses are applied. */
+  private parsed = new Map<string, ToolEntry>();
+  /** Instance choices by "tag|excludeTag", rebuilt when an instance note changes. */
+  private choices = new Map<string, ServiceChoice[]>();
+  /** Paths of the notes currently used as instances. */
+  private servicePaths = new Set<string>();
+  /** Everything must be read again (first scan, settings change, refresh()). */
+  private needsFull = true;
+  /** Tool notes to read again. */
+  private dirtyTools = new Set<string>();
+  /** An instance note changed: the choices must be rebuilt. */
+  private servicesDirty = false;
+
   constructor(
     private readonly source: NoteSource,
     private readonly options: () => RegistryOptions,
   ) {}
 
-  /** Rescans the vault. Calls made while a scan runs are merged into one more scan. */
+  /** Rescans every tool note. Calls made while a scan runs are merged into one more scan. */
   refresh(): Promise<void> {
+    this.needsFull = true;
+    return this.ensureFresh();
+  }
+
+  /** Applies the pending note changes, if any. Call before answering the AI. */
+  ensureFresh(): Promise<void> {
     if (this.running) {
-      this.pending = true;
+      if (this.isDirty()) this.pending = true;
       return this.running;
     }
+    if (!this.isDirty()) return Promise.resolve();
     this.running = (async () => {
       try {
         do {
           this.pending = false;
-          await this.scan();
-        } while (this.pending);
+          await this.update();
+        } while (this.pending || this.isDirty());
       } finally {
         this.running = null;
       }
     })();
     return this.running;
+  }
+
+  /**
+   * A note was created or changed. Returns true when it matters to the tools
+   * (it is or was a tool note or an instance note); the change is applied by ensureFresh().
+   */
+  noteChanged(path: string): boolean {
+    if (this.needsFull) return true;
+    const opts = this.options();
+    if (!opts.enabled || !opts.toolTag.trim()) return false;
+    const note = this.source.get(path);
+    let relevant = false;
+    if (this.parsed.has(path) || (note && hasTag(note.tags, opts.toolTag))) {
+      this.dirtyTools.add(path);
+      relevant = true;
+    }
+    if (this.servicePaths.has(path) || (note && this.isServiceNote(note.tags))) {
+      this.servicesDirty = true;
+      relevant = true;
+    }
+    return relevant;
+  }
+
+  /** A note was deleted. Returns true when it matters to the tools. */
+  noteDeleted(path: string): boolean {
+    if (this.needsFull) return true;
+    let relevant = false;
+    if (this.parsed.has(path)) {
+      this.dirtyTools.add(path);
+      relevant = true;
+    }
+    if (this.servicePaths.has(path)) {
+      this.servicesDirty = true;
+      relevant = true;
+    }
+    return relevant;
+  }
+
+  /** A note was renamed or moved. Returns true when it matters to the tools. */
+  noteRenamed(oldPath: string, newPath: string): boolean {
+    const before = this.noteDeleted(oldPath);
+    const after = this.noteChanged(newPath);
+    return before || after;
   }
 
   /** Recomputes statuses after a settings change, without reading the notes again. */
@@ -84,25 +156,88 @@ export class ToolRegistry {
     return () => this.listeners.delete(listener);
   }
 
-  private async scan(): Promise<void> {
+  private isDirty(): boolean {
+    return this.needsFull || this.servicesDirty || this.dirtyTools.size > 0;
+  }
+
+  /** True when the tags make the note an instance of some generic tool. */
+  private isServiceNote(tags: string[]): boolean {
+    for (const e of this.parsed.values()) {
+      if (e.serviceTag && hasTag(tags, e.serviceTag)) return true;
+    }
+    return false;
+  }
+
+  /** Reads the changed notes (or all of them) and rebuilds the list. */
+  private async update(): Promise<void> {
     const opts = this.options();
     if (!opts.enabled || !opts.toolTag.trim()) {
+      this.needsFull = false;
+      this.dirtyTools.clear();
+      this.servicesDirty = false;
+      this.parsed.clear();
+      this.clearChoices();
       this.entries = [];
       this.emitIfChanged();
       return;
     }
-    const notes = this.source.byTag(opts.toolTag).sort((a, b) => a.path.localeCompare(b.path));
-    const next: ToolEntry[] = [];
-    for (const note of notes) {
-      let body = "";
-      try {
-        body = await this.source.read(note);
-      } catch {
-        // A note deleted during the scan: skip it, the next event triggers another scan.
-        continue;
+
+    if (this.needsFull) {
+      this.needsFull = false;
+      this.dirtyTools.clear();
+      this.servicesDirty = false;
+      this.parsed.clear();
+      this.clearChoices();
+      for (const note of this.source.byTag(opts.toolTag)) await this.readTool(note.path, note);
+    } else {
+      const paths = [...this.dirtyTools];
+      this.dirtyTools.clear();
+      const tagsBefore = this.serviceKeys();
+      for (const path of paths) {
+        const note = this.source.get(path);
+        if (note && hasTag(note.tags, opts.toolTag)) await this.readTool(path, note);
+        else this.parsed.delete(path);
       }
-      const parsed = parseToolNote({ ...note, body });
-      const entry: ToolEntry = { ...parsed, status: "invalid" };
+      // A tool that starts using another instance tag needs choices that were never built.
+      if ([...this.serviceKeys()].some((k) => !tagsBefore.has(k))) this.servicesDirty = true;
+      if (this.servicesDirty) {
+        this.servicesDirty = false;
+        this.clearChoices();
+      }
+    }
+    this.build();
+  }
+
+  private async readTool(path: string, note: VaultNote): Promise<void> {
+    let body = "";
+    try {
+      body = await this.source.read(note);
+    } catch {
+      // A note deleted while reading: drop it, the delete event does the rest.
+      this.parsed.delete(path);
+      return;
+    }
+    this.parsed.set(path, { ...parseToolNote({ ...note, body }), status: "invalid" });
+  }
+
+  private serviceKeys(): Set<string> {
+    const keys = new Set<string>();
+    for (const e of this.parsed.values()) if (e.serviceTag && e.serviceParam) keys.add(choiceKey(e));
+    return keys;
+  }
+
+  private clearChoices(): void {
+    this.choices.clear();
+    this.servicePaths.clear();
+  }
+
+  /** Builds the final entries from the parsed notes. Reads nothing. */
+  private build(): void {
+    const next: ToolEntry[] = [];
+    for (const path of [...this.parsed.keys()].sort((a, b) => a.localeCompare(b))) {
+      const base = this.parsed.get(path)!;
+      // Copies: duplicates and instances add problems and params that must not stick to the cache.
+      const entry: ToolEntry = { ...base, params: { ...base.params }, problems: [...base.problems], warnings: [...base.warnings] };
       if (entry.serviceTag && entry.serviceParam) this.addServiceChoices(entry, entry.serviceTag, entry.serviceParam);
       next.push(entry);
     }
@@ -129,8 +264,15 @@ export class ToolRegistry {
   /** Generic tools: one argument picks the service note, among the notes with the tag. */
   private addServiceChoices(entry: ToolEntry, tag: string, param: string): void {
     const exclude = entry.serviceExcludeTag;
-    const notes = this.source.byTag(tag).filter((n) => !exclude || !hasTag(n.tags, exclude));
-    const choices = serviceChoices(notes);
+    const key = choiceKey(entry);
+    let choices = this.choices.get(key);
+    if (!choices) {
+      const tagged = this.source.byTag(tag);
+      choices = serviceChoices(tagged.filter((n) => !exclude || !hasTag(n.tags, exclude)));
+      this.choices.set(key, choices);
+      // Every note with the tag counts, excluded ones too: removing the exclude tag changes the choices.
+      for (const n of tagged) this.servicePaths.add(n.path);
+    }
     entry.serviceChoices = choices;
     if (choices.length === 0) {
       entry.problems.push(`No service notes found with the tag #${tag}${exclude ? ` (without #${exclude})` : ""}. Create one note per instance with that tag.`);

@@ -101,10 +101,10 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       settings: () => ({ ...s() }),
       guide: (mode) => this.agentGuide(undefined, mode),
     });
-    this.registerEvent(this.app.metadataCache.on("changed", () => this.scheduleToolScan()));
-    this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleToolScan()));
-    this.registerEvent(this.app.vault.on("delete", () => this.scheduleToolScan()));
-    this.registerEvent(this.app.vault.on("rename", () => this.scheduleToolScan()));
+    // Only tool notes and instance notes are read again; the registry ignores every other note.
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteEvent(() => this.registry.noteChanged(file.path))));
+    this.registerEvent(this.app.vault.on("delete", (file) => this.onNoteEvent(() => this.registry.noteDeleted(file.path))));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => this.onNoteEvent(() => this.registry.noteRenamed(oldPath, file.path))));
     this.register(() => {
       if (this.toolScanTimer !== undefined) window.clearTimeout(this.toolScanTimer);
     });
@@ -503,12 +503,19 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     });
   }
 
+  /** Runs the registry check for a note event and schedules an update only when the note matters. */
+  private onNoteEvent(isRelevant: () => boolean): void {
+    if (!this.data.settings.toolsEnabled) return;
+    if (isRelevant()) this.scheduleToolScan();
+  }
+
+  /** Applies the pending tool note changes shortly after the last one. Requests from the AI also apply them first: see ToolsService.ready(). */
   private scheduleToolScan(): void {
     if (!this.data.settings.toolsEnabled) return;
     if (this.toolScanTimer !== undefined) window.clearTimeout(this.toolScanTimer);
     this.toolScanTimer = window.setTimeout(() => {
       this.toolScanTimer = undefined;
-      void this.registry.refresh();
+      void this.registry.ensureFresh();
     }, 300);
   }
 
