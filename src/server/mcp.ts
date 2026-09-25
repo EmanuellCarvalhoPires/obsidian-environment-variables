@@ -134,6 +134,7 @@ export async function handleMcpMessage(message: unknown, ctx: McpContext): Promi
     case "ping":
       return { jsonrpc: "2.0", id, result: {} };
     case "tools/list":
+      await ctx.tools?.ready();
       return { jsonrpc: "2.0", id, result: { tools: [...TOOLS, ...(ctx.tools?.mcpTools() ?? [])] } };
     case "tools/call":
       return { jsonrpc: "2.0", id, result: await callTool(message.params ?? {}, ctx) };

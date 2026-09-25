@@ -101,6 +101,11 @@ export class ToolsService {
     return this.deps.registry.onChange(listener);
   }
 
+  /** Applies tool note changes not yet read, so the AI never sees an outdated list. */
+  async ready(): Promise<void> {
+    if (this.enabled()) await this.deps.registry.ensureFresh();
+  }
+
   /** Management tools plus every exposed, usable vault tool. Empty when the feature is off. */
   mcpTools(): McpToolDefinition[] {
     if (!this.enabled()) return [];
@@ -118,6 +123,7 @@ export class ToolsService {
 
   async callMcp(name: string, args: Record<string, unknown>, client: ClientContext): Promise<McpCallOutput> {
     try {
+      await this.ready();
       if (name === "get_tool_authoring_guide") return { text: this.deps.guide(isGuideMode(args.mode) ? args.mode : undefined), isError: false };
       if (name === "list_vault_tools") return { value: this.status(), isError: false };
       if (name === "run_vault_tool") {
