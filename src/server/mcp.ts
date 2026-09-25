@@ -16,7 +16,7 @@ export const SERVER_INSTRUCTIONS = [
   "Never ask the user for the real value. Put the placeholder in a header (usually Authorization) and call http_request;",
   "the plugin replaces it with the real value, checks that the destination host is allowed, and masks the value in the response.",
   "Call list_secrets to see the available keys and the hosts each one may be sent to.",
-  "If the vault is locked, ask the user to unlock it in Obsidian (Environment Variables panel). Do not try other ways to obtain the secret.",
+  "If the vault is locked, ask the user to unlock it in Obsidian (Environment Keys panel). Do not try other ways to obtain the secret.",
 ].join(" ");
 
 const TOOLS_INSTRUCTIONS = [
@@ -58,7 +58,7 @@ const TOOLS = [
     name: "list_secrets",
     title: "List secret keys",
     description:
-      "List the keys stored in the user's Environment Variables vault: name, type, description, allowed hosts and where each key may be placed. Never returns values.",
+      "List the keys stored in the user's Environment Keys vault: name, type, description, allowed hosts and where each key may be placed. Never returns values.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -126,7 +126,7 @@ export async function handleMcpMessage(message: unknown, ctx: McpContext): Promi
         result: {
           protocolVersion,
           capabilities,
-          serverInfo: { name: SERVER_NAME, title: "Environment Variables (Obsidian)", version: ctx.version },
+          serverInfo: { name: SERVER_NAME, title: "Environment Keys (Obsidian)", version: ctx.version },
           instructions: toolsOn ? `${SERVER_INSTRUCTIONS} ${TOOLS_INSTRUCTIONS}` : SERVER_INSTRUCTIONS,
         },
       };

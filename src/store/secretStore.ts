@@ -9,7 +9,7 @@ export interface VaultIO {
 
 export class VaultLockedError extends Error {
   constructor() {
-    super("The vault is locked. Unlock it in Obsidian (Environment Variables panel).");
+    super("The vault is locked. Unlock it in Obsidian (Environment Keys panel).");
     this.name = "VaultLockedError";
   }
 }

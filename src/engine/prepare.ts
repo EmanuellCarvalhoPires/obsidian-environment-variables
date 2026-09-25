@@ -97,7 +97,7 @@ export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit
     let last = 0;
     for (const m of matches) {
       const secret = lookupOrThrow(lookup, m);
-      if (!permit(secret)) throw new PolicyError("secret_not_permitted", `This client is not allowed to use ${secret.name}. Grant access in Obsidian (Environment Variables > AI clients).`);
+      if (!permit(secret)) throw new PolicyError("secret_not_permitted", `This client is not allowed to use ${secret.name}. Grant access in Obsidian (Environment Keys > AI clients).`);
       checkPlacement(secret, where);
       checkDestination(secret, checkUrl, display);
       used.set(secret.name, secret);
