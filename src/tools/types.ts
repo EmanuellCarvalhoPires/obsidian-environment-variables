@@ -74,7 +74,7 @@ export interface ToolEntry {
 
 /** One instance a generic tool can run against. */
 export interface ServiceChoice {
-  /** What the AI passes, e.g. "A5X" for the note "Acesso Jira - A5X". */
+  /** What the AI passes, e.g. "Acme" for the note "Jira - Acme". */
   id: string;
   notePath: string;
   noteName: string;

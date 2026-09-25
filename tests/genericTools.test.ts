@@ -17,23 +17,23 @@ const client: ClientContext = { id: "c", name: "test", access: { mode: "all" } }
 const settings: ToolsSettings = { toolsEnabled: true, scriptsEnabled: true, toolTag: "mcp/tool", requestTag: "api/request", scriptTimeoutSeconds: 5, maxResponseMB: 1 };
 
 describe("service choices", () => {
-  const note = (name: string) => ({ path: `Acesso/${name}.md`, name, frontmatter: {}, tags: [] });
+  const note = (name: string) => ({ path: `Services/${name}.md`, name, frontmatter: {}, tags: [] });
 
   it("drops the shared part of the note names", () => {
-    const ids = serviceChoices([note("Acesso Jira - Telecall"), note("Acesso Jira - A5X"), note("Acesso Jira - Assets")]).map((c) => c.id);
-    expect(ids).toEqual(["A5X", "Assets", "Telecall"]);
+    const ids = serviceChoices([note("Jira - Globex"), note("Jira - Acme"), note("Jira - Assets")]).map((c) => c.id);
+    expect(ids).toEqual(["Acme", "Assets", "Globex"]);
   });
 
   it("keeps the full name for a single note or when ids would clash", () => {
-    expect(serviceChoices([note("Acesso Jira - A5X")]).map((c) => c.id)).toEqual(["Acesso Jira - A5X"]);
+    expect(serviceChoices([note("Jira - Acme")]).map((c) => c.id)).toEqual(["Jira - Acme"]);
     expect(serviceChoices([note("Jira"), note("Jira ")]).map((c) => c.id)).toEqual(["Jira", "Jira "]);
   });
 
   it("validates the generic tool properties", () => {
     const parse = (fm: Record<string, unknown>) => parseToolNote({ path: "t.md", name: "t", frontmatter: fm, tags: [], body: "" });
     const base = { tool: "jira_get", kind: "request", request: "[[R]]", description: "d" };
-    expect(parse({ ...base, service_tag: "jira/instancia", service_param: "instancia" }).problems).toEqual([]);
-    expect(parse({ ...base, service_tag: "jira/instancia" }).serviceParam).toBe("instance");
+    expect(parse({ ...base, service_tag: "service/jira", service_param: "instancia" }).problems).toEqual([]);
+    expect(parse({ ...base, service_tag: "service/jira" }).serviceParam).toBe("instance");
     expect(parse({ ...base, service_tag: "x", service: "[[S]]" }).problems.join()).toMatch(/not both/);
     expect(parse({ ...base, service_tag: "x", service_param: "key", params: { key: "string" } }).problems.join()).toMatch(/also in "params"/);
     expect(parse({ ...base, service_param: "instancia" }).problems.join()).toMatch(/only work together/);
@@ -62,9 +62,9 @@ describe("generic tools: one service note per instance", () => {
     await store.add(secretInput({ name: "JIRA_B", username: "b@x.com", value: "second-secret-token-value-123", allowHttpLocalhost: true, allowedHosts: [`127.0.0.1:${port}`] }));
 
     // The instance notes hold every value; the request and tool notes are generic.
-    source.add("Acesso/Acesso Jira - Alpha.md", { tags: ["jira/instancia"], url: `http://127.0.0.1:${port}/alpha`, token_chave: "{{basic:JIRA_A}}" });
-    source.add("Acesso/Acesso Jira - Beta.md", { tags: ["jira/instancia"], url: `http://127.0.0.1:${port}/beta`, token_chave: "{{basic:JIRA_B}}" });
-    source.add("Acesso/Acesso Jira - Molde.md", { tags: ["jira/instancia", "molde"], url: "https://empresa.atlassian.net", token_chave: "" });
+    source.add("Services/Jira - Alpha.md", { tags: ["service/jira"], url: `http://127.0.0.1:${port}/alpha`, token_chave: "{{basic:JIRA_A}}" });
+    source.add("Services/Jira - Beta.md", { tags: ["service/jira"], url: `http://127.0.0.1:${port}/beta`, token_chave: "{{basic:JIRA_B}}" });
+    source.add("Services/Jira - Template.md", { tags: ["service/jira", "template"], url: "https://empresa.atlassian.net", token_chave: "" });
     source.add(
       "Req/Jira - Buscar ticket.md",
       { tags: ["api/request"] },
@@ -75,9 +75,9 @@ describe("generic tools: one service note per instance", () => {
       tool: "jira_buscar_ticket",
       kind: "request",
       request: "[[Jira - Buscar ticket]]",
-      service_tag: "jira/instancia",
+      service_tag: "service/jira",
       service_param: "instancia",
-      service_exclude_tag: "molde",
+      service_exclude_tag: "template",
       description: "Busca um ticket em qualquer instância.",
       params: { chave: { type: "string", required: true } },
     });
@@ -87,9 +87,9 @@ describe("generic tools: one service note per instance", () => {
         tags: ["mcp/tool"],
         tool: "jira_resumo",
         kind: "script",
-        service_tag: "jira/instancia",
+        service_tag: "service/jira",
         service_param: "instancia",
-        service_exclude_tag: "molde",
+        service_exclude_tag: "template",
         description: "Resumo.",
         params: { chave: { type: "string", required: true } },
       },
@@ -131,7 +131,7 @@ describe("generic tools: one service note per instance", () => {
   });
 
   it("refuses an instance that is not a note (or a template)", async () => {
-    await expect(tools.run("jira_buscar_ticket", { instancia: "Molde", chave: "X" }, client)).rejects.toThrow(/must be one of: Alpha, Beta/);
+    await expect(tools.run("jira_buscar_ticket", { instancia: "Template", chave: "X" }, client)).rejects.toThrow(/must be one of: Alpha, Beta/);
     await expect(tools.run("jira_buscar_ticket", { chave: "X" }, client)).rejects.toThrow(/Missing required argument "instancia"/);
   });
 
@@ -141,7 +141,7 @@ describe("generic tools: one service note per instance", () => {
   });
 
   it("picks up a new instance note without touching the tools", async () => {
-    source.add("Acesso/Acesso Jira - Gamma.md", { tags: ["jira/instancia"], url: `http://127.0.0.1:${port}/gamma`, token_chave: "{{basic:JIRA_A}}" });
+    source.add("Services/Jira - Gamma.md", { tags: ["service/jira"], url: `http://127.0.0.1:${port}/gamma`, token_chave: "{{basic:JIRA_A}}" });
     await registry.refresh();
     expect(registry.get("jira_buscar_ticket")!.params.instancia.enum).toEqual(["Alpha", "Beta", "Gamma"]);
     expect(registry.get("jira_resumo")!.params.instancia.enum).toEqual(["Alpha", "Beta", "Gamma"]);

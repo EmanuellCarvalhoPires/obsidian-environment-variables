@@ -80,7 +80,7 @@ export function parseToolNote(note: VaultNoteWithBody): ParsedTool {
   let serviceExcludeTag: string | undefined;
   if (fm.service_tag !== undefined) {
     if (typeof fm.service_tag === "string" && fm.service_tag.trim()) serviceTag = fm.service_tag.trim().replace(/^#/, "");
-    else problems.push('"service_tag" must be the tag of the service notes, e.g. service_tag: jira/instancia.');
+    else problems.push('"service_tag" must be the tag of the service notes, e.g. service_tag: service/jira.');
     if (service) problems.push('Use either "service" (one fixed service note) or "service_tag" (the service is chosen at call time), not both.');
     const p = fm.service_param ?? "instance";
     if (typeof p !== "string" || !PARAM_NAME_PATTERN.test(p)) problems.push('"service_param" must be a parameter name, e.g. service_param: instancia.');
@@ -88,7 +88,7 @@ export function parseToolNote(note: VaultNoteWithBody): ParsedTool {
     else serviceParam = p;
     if (fm.service_exclude_tag !== undefined) {
       if (typeof fm.service_exclude_tag === "string" && fm.service_exclude_tag.trim()) serviceExcludeTag = fm.service_exclude_tag.trim().replace(/^#/, "");
-      else problems.push('"service_exclude_tag" must be a tag, e.g. service_exclude_tag: molde.');
+      else problems.push('"service_exclude_tag" must be a tag, e.g. service_exclude_tag: template.');
     }
   } else if (fm.service_param !== undefined || fm.service_exclude_tag !== undefined) {
     problems.push('"service_param" and "service_exclude_tag" only work together with "service_tag".');
