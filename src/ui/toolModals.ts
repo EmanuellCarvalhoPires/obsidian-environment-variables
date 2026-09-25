@@ -1,4 +1,5 @@
 import { App, Modal, Setting } from "obsidian";
+import { iconLine } from "./dom";
 import { t } from "../i18n";
 import { ToolEntry } from "../tools/types";
 
@@ -24,7 +25,7 @@ export class ToolRunModal extends Modal {
     contentEl.addClass("ev-tool-modal");
     contentEl.createEl("p", { text: tool.description, cls: "ev-muted" });
     contentEl.createEl("p", { text: t("modal.toolRun.body"), cls: "ev-muted" });
-    if (tool.writes) contentEl.createEl("p", { text: `⚠ ${t("modal.toolRun.writes")}`, cls: "ev-warning" });
+    if (tool.writes) iconLine(contentEl, "alert-triangle", t("modal.toolRun.writes"), "ev-warning ev-modal-warning");
 
     for (const [name, spec] of Object.entries(tool.params)) {
       const setting = new Setting(contentEl).setName(spec.required ? `${name} *` : name).setDesc(spec.description ?? spec.type);

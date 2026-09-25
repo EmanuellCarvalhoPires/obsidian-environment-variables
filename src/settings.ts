@@ -25,7 +25,11 @@ export interface Settings {
   /** Tag of request notes, for discovery. */
   requestTag: string;
   scriptTimeoutSeconds: number;
+  /** Language of the plugin: "auto" follows Obsidian's language. */
+  language: LanguageSetting;
 }
+
+export type LanguageSetting = "auto" | "en" | "pt-BR";
 
 export const DEFAULT_SETTINGS: Settings = {
   serverEnabled: false,
@@ -42,6 +46,7 @@ export const DEFAULT_SETTINGS: Settings = {
   toolTag: "mcp/tool",
   requestTag: "api/request",
   scriptTimeoutSeconds: 30,
+  language: "auto",
 };
 
 /** Name and type of a variable: enough to write a reference, never the value. */

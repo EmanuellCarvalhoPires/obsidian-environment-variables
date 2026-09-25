@@ -32,7 +32,7 @@ let teste: Awaited<ReturnType<typeof vaultServer>>;
 
 beforeAll(async () => {
   cofre = await vaultServer(PORT, { id: "aaaa", name: "Cofre" });
-  teste = await vaultServer(PORT, { id: "bbbb", name: "Teste Plugin" });
+  teste = await vaultServer(PORT, { id: "bbbb", name: "Work Notes" });
   await cofre.server.start();
 });
 
@@ -65,7 +65,7 @@ describe("one server per vault", () => {
 
   it("each vault only accepts its own client token", async () => {
     // The second vault moves to the next port, as the plugin does after PortInUseError.
-    const moved = await vaultServer(PORT + 1, { id: "bbbb", name: "Teste Plugin" });
+    const moved = await vaultServer(PORT + 1, { id: "bbbb", name: "Work Notes" });
     await moved.server.start();
     try {
       const ask = (port: number, token: string) => fetch(`http://127.0.0.1:${port}/v1/secrets`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.status);

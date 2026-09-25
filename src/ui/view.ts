@@ -1,4 +1,4 @@
-import { ItemView, Notice, setIcon, ToggleComponent, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, setIcon, Setting, setTooltip, WorkspaceLeaf } from "obsidian";
 import { WrongPasswordError } from "../crypto/vaultFile";
 import { t } from "../i18n";
 import { Integration, IntegrationId, INTEGRATIONS } from "../integrations/integrations";
@@ -10,6 +10,7 @@ import { accessOf, ClientAccess, ClientRecord } from "../server/clients";
 import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal } from "./modals";
 import { GUIDE_MODES, GuideMode } from "../tools/guide";
 import { ToolEntry } from "../tools/types";
+import { iconLine } from "./dom";
 import { ToolRunModal } from "./toolModals";
 
 export const VIEW_TYPE = "environment-variables-view";
@@ -24,6 +25,7 @@ export class EnvironmentVariablesView extends ItemView {
   private error = "";
   private clientsOpen: boolean | undefined;
   private toolsOpen: boolean | undefined;
+  private logOpen = false;
   private guideVisible: GuideMode | null = null;
   private connecting: IntegrationId | null = null;
   private detected = new Map<IntegrationId, boolean>();
@@ -168,25 +170,37 @@ export class EnvironmentVariablesView extends ItemView {
     this.error = "";
   }
 
-  // ---------- unlocked ----------
+
+  // ---------- unlocked: three sections ----------
 
   private renderUnlocked(root: HTMLElement): void {
-    const header = root.createDiv({ cls: "ev-header" });
-    const status = header.createDiv({ cls: "ev-status" });
-    setIcon(status.createSpan({ cls: "ev-status-icon" }), ICON_UNLOCKED);
-    status.createSpan({ text: t("view.status.unlocked") });
-    const lockBtn = header.createEl("button", { text: t("view.lockNow") });
-    lockBtn.addEventListener("click", () => this.plugin.lock());
+    this.renderServerHeader(root);
+    this.renderSecrets(root);
+    this.renderMcp(root);
+    this.renderLog(root);
+  }
 
-    const server = root.createDiv({ cls: "ev-server" });
+  /** The state of the local MCP server, always at the top of the panel. */
+  private renderServerHeader(root: HTMLElement): void {
     const running = this.plugin.server?.running ?? false;
-    server.createSpan({ cls: `ev-dot ${running ? "is-on" : "is-off"}` });
-    server.createSpan({ text: running ? t("view.server.on", { port: this.plugin.data.settings.port }) : t("view.server.off") });
-    server.createSpan({ text: t("view.server.name", { name: this.plugin.serverName }), cls: "ev-muted ev-server-name" });
-    const toggle = server.createEl("button", { text: running ? t("view.server.stop") : t("view.server.start") });
-    toggle.addEventListener("click", () => void this.plugin.setServerEnabled(!running));
+    const header = new Setting(root).setName(t("settings.server")).setClass("ev-server-header");
+    header.nameEl.prepend(createSpan({ cls: `ev-dot ${running ? "is-on" : "is-off"}` }));
+    header.setDesc(`${running ? `127.0.0.1:${this.plugin.data.settings.port}` : t("view.server.off")} · ${this.plugin.serverName}`);
+    header.addButton((b) => {
+      b.setButtonText(running ? t("view.server.stop") : t("view.server.start")).onClick(() => void this.plugin.setServerEnabled(!running));
+      if (!running) b.setCta();
+    });
+  }
 
-    const toolbar = root.createDiv({ cls: "ev-toolbar" });
+  // ---------- Environment Variables ----------
+
+  private renderSecrets(root: HTMLElement): void {
+    const section = root.createDiv({ cls: "ev-section" });
+    const heading = sectionHeading(section, t("view.section.env"));
+    badge(heading.nameEl, t("view.status.unlocked"), "ev-badge-ok", ICON_UNLOCKED);
+    heading.addButton((b) => b.setButtonText(t("view.lockNow")).onClick(() => this.plugin.lock()));
+
+    const toolbar = section.createDiv({ cls: "ev-toolbar" });
     const search = toolbar.createEl("input", { type: "search", placeholder: t("view.search"), value: this.query });
     search.addEventListener("input", () => {
       this.query = search.value;
@@ -195,12 +209,8 @@ export class EnvironmentVariablesView extends ItemView {
     const add = toolbar.createEl("button", { text: t("view.new"), cls: "mod-cta" });
     add.addEventListener("click", () => new SecretModal(this.app, this.plugin.store, null).open());
 
-    const list = root.createDiv({ cls: "ev-list" });
+    const list = section.createDiv({ cls: "ev-rows" });
     this.renderList(list);
-
-    this.renderTools(root);
-    this.renderClients(root);
-    this.renderLog(root);
   }
 
   private renderList(list: HTMLElement): void {
@@ -217,137 +227,129 @@ export class EnvironmentVariablesView extends ItemView {
   }
 
   private renderItem(list: HTMLElement, secret: SecretRecord): void {
-    const item = list.createDiv({ cls: "ev-item" });
-    const top = item.createDiv({ cls: "ev-item-top" });
-    top.createSpan({ text: secret.name, cls: "ev-item-name" });
-    top.createSpan({ text: t(`type.${secret.type}`), cls: "ev-badge" });
-    top.createSpan({ text: "••••••••", cls: "ev-mask" });
-    if (secret.description) item.createDiv({ text: secret.description, cls: "ev-muted" });
-    const meta = item.createDiv({ cls: "ev-item-meta" });
-    meta.createSpan({
-      text: `${t("view.col.hosts")}: ${hostsLabel(secret)}`,
+    const row = new Setting(list).setClass("ev-row");
+    const name = row.nameEl.createSpan({ text: secret.name, cls: "ev-item-name" });
+    row.nameEl.createSpan({ text: t(`type.${secret.type}`), cls: "ev-badge" });
+    const lastUsed = `${t("view.col.lastUsed")}: ${secret.lastUsedAt ? new Date(secret.lastUsedAt).toLocaleString() : t("view.never")}`;
+    setTooltip(name, secret.description ? `${secret.description}\n${lastUsed}` : lastUsed);
+    row.descEl.createSpan({
+      text: hostsLabel(secret),
       cls: secret.allowAnyHost === true || secret.allowedHosts.length === 0 ? "ev-warning" : "",
     });
-    meta.createSpan({ text: `${t("view.col.lastUsed")}: ${secret.lastUsedAt ? new Date(secret.lastUsedAt).toLocaleString() : t("view.never")}` });
     const shared = secret.allowAnyHost === true ? [] : secret.allowedHosts.filter((h) => wildcardRisk(h) === "multitenant");
-    if (shared.length) item.createDiv({ text: `⚠ ${t("view.multitenantWarning", { hosts: shared.join(", ") })}`, cls: "ev-warning ev-item-warning" });
+    if (shared.length) iconLine(row.descEl, "alert-triangle", t("view.multitenantWarning", { hosts: shared.join(", ") }), "ev-warning");
 
-    const actions = item.createDiv({ cls: "ev-actions" });
-    iconButton(actions, "copy", t("view.copyKey"), () => {
-      const ref = referenceFor(secret);
-      void navigator.clipboard.writeText(ref);
-      new Notice(t("view.copied", { key: ref }));
-    });
-    iconButton(actions, "pencil", t("view.edit"), () => new SecretModal(this.app, this.plugin.store, secret).open());
-    iconButton(actions, "trash-2", t("view.delete"), () =>
-      new ConfirmModal(this.app, t("view.deleteConfirm", { name: secret.name }), () => this.plugin.store.remove(secret.id)).open(),
+    row.addExtraButton((b) =>
+      b.setIcon("copy").setTooltip(t("view.copyKey")).onClick(() => {
+        const ref = referenceFor(secret);
+        void navigator.clipboard.writeText(ref);
+        new Notice(t("view.copied", { key: ref }));
+      }),
+    );
+    row.addExtraButton((b) => b.setIcon("pencil").setTooltip(t("view.edit")).onClick(() => new SecretModal(this.app, this.plugin.store, secret).open()));
+    row.addExtraButton((b) =>
+      b
+        .setIcon("trash-2")
+        .setTooltip(t("view.delete"))
+        .onClick(() => new ConfirmModal(this.app, t("view.deleteConfirm", { name: secret.name }), () => this.plugin.store.remove(secret.id)).open()),
     );
   }
 
-  // ---------- vault tools ----------
+  // ---------- Local MCP Settings ----------
 
-  private renderTools(root: HTMLElement): void {
+  private renderMcp(root: HTMLElement): void {
+    const section = root.createDiv({ cls: "ev-section" });
+    sectionHeading(section, t("view.section.mcp"));
+
+    const clients = this.plugin.data.clients;
+    this.renderClients(collapsible(section, t("view.clients.title"), this.clientsOpen ?? clients.length === 0, (open) => (this.clientsOpen = open)));
+
     const settings = this.plugin.data.settings;
     const entries = this.plugin.registry.list();
-    const details = root.createEl("details", { cls: "ev-section" });
-    details.open = this.toolsOpen ?? (settings.toolsEnabled && entries.some((e) => e.status !== "ready"));
-    details.addEventListener("toggle", () => (this.toolsOpen = details.open));
-    details.createEl("summary", { text: t("view.tools.title") });
+    const toolsOpen = this.toolsOpen ?? (settings.toolsEnabled && entries.some((e) => e.status !== "ready"));
+    this.renderTools(collapsible(section, t("view.tools.title"), toolsOpen, (open) => (this.toolsOpen = open)));
+  }
 
-    const switches = details.createDiv({ cls: "ev-tool-switches" });
-    toolSwitch(switches, t("settings.toolsEnabled"), t("settings.toolsEnabledDesc"), settings.toolsEnabled, false, (v) => this.plugin.setToolsEnabled(v));
-    toolSwitch(switches, t("settings.scriptsEnabled"), t("settings.scriptsEnabledDesc"), settings.scriptsEnabled, !settings.toolsEnabled, (v) =>
-      this.plugin.setScriptsEnabled(v),
-    );
+  private renderTools(body: HTMLElement): void {
+    const settings = this.plugin.data.settings;
+    const entries = this.plugin.registry.list();
+
+    const tools = new Setting(body)
+      .setName(t("settings.toolsEnabled"))
+      .setClass("ev-row")
+      .addToggle((tg) => tg.setValue(settings.toolsEnabled).onChange((v) => void this.plugin.setToolsEnabled(v)));
+    setTooltip(tools.nameEl, t("settings.toolsEnabledDesc"));
+    const scripts = new Setting(body)
+      .setName(t("settings.scriptsEnabled"))
+      .setClass("ev-row")
+      .setDisabled(!settings.toolsEnabled)
+      .addToggle((tg) => tg.setValue(settings.scriptsEnabled).setDisabled(!settings.toolsEnabled).onChange((v) => void this.plugin.setScriptsEnabled(v)));
+    setTooltip(scripts.nameEl, t("settings.scriptsEnabledDesc"));
 
     if (!settings.toolsEnabled) {
-      details.createEl("p", { text: t("view.tools.off"), cls: "ev-muted" });
+      body.createEl("p", { text: t("view.tools.off"), cls: "ev-muted" });
       return;
     }
-
-    details.createEl("p", {
-      text: t("view.tools.summary", { n: entries.length, scripts: settings.scriptsEnabled ? t("view.tools.on") : t("view.tools.off2") }),
-      cls: "ev-muted",
-    });
 
     // The prompts for AI agents: how the tools work and the mandatory plan-first workflow, one per task.
-    details.createEl("h6", { text: t("view.tools.guideTitle"), cls: "ev-subtitle" });
-    details.createEl("p", { text: t("view.tools.guideBody"), cls: "ev-muted" });
-    const prompts = details.createDiv({ cls: "ev-list" });
-    for (const mode of GUIDE_MODES) this.renderPrompt(prompts, mode);
+    subHeading(body, t("view.tools.guideTitle"), { info: t("view.tools.guideBody") });
+    for (const mode of GUIDE_MODES) this.renderPrompt(body, mode);
 
-    details.createEl("h6", { text: t("view.tools.listTitle"), cls: "ev-subtitle" });
+    subHeading(body, t("view.tools.listTitle"), { count: entries.length });
     if (entries.length === 0) {
-      details.createDiv({ text: t("view.tools.empty", { tag: settings.toolTag }), cls: "ev-muted" });
+      body.createDiv({ text: t("view.tools.empty", { tag: settings.toolTag }), cls: "ev-muted ev-empty" });
       return;
     }
-    const list = details.createDiv({ cls: "ev-list" });
-    for (const entry of entries) this.renderTool(list, entry);
+    for (const entry of entries) this.renderTool(body, entry);
   }
 
-  private renderPrompt(list: HTMLElement, mode: GuideMode): void {
-    const item = list.createDiv({ cls: "ev-item ev-prompt" });
-    const top = item.createDiv({ cls: "ev-item-top" });
-    top.createSpan({ text: t(`view.tools.prompt.${mode}`), cls: "ev-prompt-name" });
-    const actions = top.createDiv({ cls: "ev-tool-actions" });
-    const copy = actions.createEl("button", { text: t("view.tools.copyGuide"), cls: "mod-cta" });
-    copy.addEventListener("click", () => this.plugin.copyAgentGuide(mode));
+  private renderPrompt(body: HTMLElement, mode: GuideMode): void {
     const shown = this.guideVisible === mode;
-    const toggle = actions.createEl("button", { text: shown ? t("view.tools.hideGuide") : t("view.tools.showGuide") });
-    toggle.addEventListener("click", () => {
-      this.guideVisible = shown ? null : mode;
-      this.render();
-    });
-    item.createDiv({ text: t(`view.tools.prompt.${mode}Desc`), cls: "ev-muted" });
-    if (shown) item.createEl("pre", { text: this.plugin.agentGuide(undefined, mode), cls: "ev-tool-guide" });
+    const row = new Setting(body)
+      .setName(t(`view.tools.prompt.${mode}`))
+      .setClass("ev-row")
+      .addExtraButton((b) =>
+        b
+          .setIcon(shown ? "eye-off" : "eye")
+          .setTooltip(shown ? t("view.tools.hideGuide") : t("view.tools.showGuide"))
+          .onClick(() => {
+            this.guideVisible = shown ? null : mode;
+            this.render();
+          }),
+      )
+      .addButton((b) => b.setButtonText(t("view.tools.copy")).setCta().onClick(() => this.plugin.copyAgentGuide(mode)));
+    setTooltip(row.nameEl, t(`view.tools.prompt.${mode}Desc`));
+    if (shown) body.createEl("pre", { text: this.plugin.agentGuide(undefined, mode), cls: "ev-tool-guide" });
   }
 
-  private renderTool(list: HTMLElement, entry: ToolEntry): void {
-    const item = list.createDiv({ cls: `ev-item ev-tool ev-tool-${entry.status}` });
-    const top = item.createDiv({ cls: "ev-item-top" });
-    top.createSpan({ text: entry.name, cls: "ev-item-name", attr: entry.description ? { title: entry.description } : {} });
-    if (entry.kind) top.createSpan({ text: entry.kind, cls: "ev-badge" });
-    top.createSpan({ text: t(`status.${entry.status}`), cls: `ev-badge ev-status-badge ev-status-${entry.status}` });
-    if (entry.writes) top.createSpan({ text: t("view.tools.writes"), cls: "ev-badge ev-warning" });
-    if (!entry.expose) top.createSpan({ text: t("view.tools.hidden"), cls: "ev-badge" });
-    const actions = top.createDiv({ cls: "ev-actions" });
-    iconButton(actions, "file-text", t("view.tools.open"), () => void this.app.workspace.openLinkText(entry.notePath, "", false));
+  private renderTool(body: HTMLElement, entry: ToolEntry): void {
+    const row = new Setting(body).setClass("ev-row");
+    row.nameEl.createSpan({ text: entry.name, cls: "ev-item-name", attr: entry.description ? { title: entry.description } : {} });
+    if (entry.kind) row.nameEl.createSpan({ text: entry.kind, cls: "ev-badge" });
+    row.nameEl.createSpan({ text: t(`status.${entry.status}`), cls: `ev-badge ev-status-${entry.status}` });
+    if (entry.writes) row.nameEl.createSpan({ text: t("view.tools.writes"), cls: "ev-badge ev-warning" });
+    if (!entry.expose) row.nameEl.createSpan({ text: t("view.tools.hidden"), cls: "ev-badge" });
+    for (const p of entry.problems) iconLine(row.descEl, "x-circle", p, "ev-error");
+    for (const w of entry.warnings) iconLine(row.descEl, "alert-triangle", w, "ev-warning");
+
+    row.addExtraButton((b) => b.setIcon("file-text").setTooltip(t("view.tools.open")).onClick(() => void this.app.workspace.openLinkText(entry.notePath, "", false)));
     if (entry.status === "ready") {
-      iconButton(actions, "play", t("view.tools.run"), () =>
-        new ToolRunModal(this.app, entry, (args) => this.plugin.tools.run(entry.name, args, this.plugin.localClient)).open(),
+      row.addExtraButton((b) =>
+        b
+          .setIcon("play")
+          .setTooltip(t("view.tools.run"))
+          .onClick(() => new ToolRunModal(this.app, entry, (args) => this.plugin.tools.run(entry.name, args, this.plugin.localClient)).open()),
       );
     }
-    for (const p of entry.problems) item.createDiv({ text: `✗ ${p}`, cls: "ev-error ev-item-warning" });
-    for (const w of entry.warnings) item.createDiv({ text: `⚠ ${w}`, cls: "ev-warning ev-item-warning" });
   }
 
-  private renderClients(root: HTMLElement): void {
-    const details = root.createEl("details", { cls: "ev-section" });
-    const clients = this.plugin.data.clients;
-    details.open = this.clientsOpen ?? clients.length === 0;
-    details.addEventListener("toggle", () => (this.clientsOpen = details.open));
-    details.createEl("summary", { text: t("view.clients.title") });
-    details.createEl("p", { text: t("view.connect.body"), cls: "ev-muted" });
+  private renderClients(body: HTMLElement): void {
+    for (const integration of INTEGRATIONS) this.renderIntegration(body, integration);
 
-    const cards = details.createDiv({ cls: "ev-integrations" });
-    for (const integration of INTEGRATIONS) this.renderIntegration(cards, integration);
-
-    const manual = clients.filter((c) => !c.integration);
-    details.createEl("h6", { text: t("view.connect.manualTitle"), cls: "ev-subtitle" });
-    details.createEl("p", { text: t("view.clients.body"), cls: "ev-muted" });
-    if (manual.length === 0) details.createDiv({ text: t("view.clients.none"), cls: "ev-muted" });
-    for (const c of manual) {
-      const row = details.createDiv({ cls: "ev-client" });
-      row.createSpan({ text: c.name, cls: "ev-item-name" });
-      row.createSpan({ text: `${c.hint}…`, cls: "ev-muted" });
-      row.createSpan({ text: c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleString() : t("view.never"), cls: "ev-muted" });
-      this.accessBadge(row, c);
-      iconButton(row, "shield", t("view.access.edit"), () => this.editAccess(c));
-      iconButton(row, "x", t("view.clients.revoke"), () =>
-        new ConfirmModal(this.app, t("view.clients.revokeConfirm", { name: c.name }), () => this.plugin.revokeClient(c.id)).open(),
-      );
-    }
-    const add = details.createEl("button", { text: t("view.connect.manual") });
+    const manual = this.plugin.data.clients.filter((c) => !c.integration);
+    const other = subHeading(body, t("view.connect.manualTitle"), { info: t("view.clients.body") });
+    const add = other.createEl("button", { cls: "clickable-icon ev-subheading-action", attr: { "aria-label": t("view.connect.manual") } });
+    setIcon(add, "plus");
     add.addEventListener("click", () =>
       new PromptModal(this.app, t("view.clients.namePrompt"), (name) =>
         new AccessModal(this.app, this.plugin.store, name || "AI client", null, async (access) => {
@@ -356,51 +358,61 @@ export class EnvironmentVariablesView extends ItemView {
         }).open(),
       ).open(),
     );
+    if (manual.length === 0) body.createDiv({ text: t("view.clients.none"), cls: "ev-muted ev-empty" });
+    for (const c of manual) {
+      const row = new Setting(body).setClass("ev-row");
+      const name = row.nameEl.createSpan({ text: c.name, cls: "ev-item-name" });
+      this.accessBadge(row.nameEl, c);
+      setTooltip(name, `${c.hint}… · ${t("view.col.lastUsed")}: ${c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleString() : t("view.never")}`);
+      row.addExtraButton((b) => b.setIcon("shield").setTooltip(t("view.access.edit")).onClick(() => this.editAccess(c)));
+      row.addExtraButton((b) =>
+        b
+          .setIcon("x")
+          .setTooltip(t("view.clients.revoke"))
+          .onClick(() => new ConfirmModal(this.app, t("view.clients.revokeConfirm", { name: c.name }), () => this.plugin.revokeClient(c.id)).open()),
+      );
+    }
   }
 
-  private renderIntegration(parent: HTMLElement, integration: Integration): void {
-    const card = parent.createDiv({ cls: "ev-integration" });
-    card.createSpan({ text: integration.label, cls: "ev-item-name" });
-    const status = card.createSpan({ cls: "ev-muted" });
-    const actions = card.createDiv({ cls: "ev-integration-actions" });
+  private renderIntegration(body: HTMLElement, integration: Integration): void {
+    const row = new Setting(body).setName(integration.label).setClass("ev-row");
     const connected = this.plugin.connectedClient(integration.id);
 
-    const button = (label: string, cta: boolean, onClick: (btn: HTMLButtonElement) => Promise<void>) => {
-      const btn = actions.createEl("button", { text: label, cls: cta ? "mod-cta" : "" });
-      const run = async () => {
-        if (this.connecting) return;
-        this.connecting = integration.id;
-        btn.disabled = true;
-        btn.setText(t("view.connect.connecting"));
-        try {
-          await onClick(btn);
-        } finally {
-          this.connecting = null;
-          await this.refresh();
-        }
-      };
-      btn.addEventListener("click", () => void run());
-    };
-
     if (connected) {
-      status.setText(
-        `✓ ${t("view.connect.connected")} · ${t("view.col.lastUsed")}: ${connected.lastUsedAt ? new Date(connected.lastUsedAt).toLocaleString() : t("view.never")}`,
+      const status = badge(row.nameEl, t("view.connect.connected"), "ev-badge-ok", "check");
+      setTooltip(status, `${t("view.col.lastUsed")}: ${connected.lastUsedAt ? new Date(connected.lastUsedAt).toLocaleString() : t("view.never")}`);
+      this.accessBadge(row.nameEl, connected);
+      row.addExtraButton((b) => b.setIcon("shield").setTooltip(t("view.access.edit")).onClick(() => this.editAccess(connected)));
+      row.addExtraButton((b) =>
+        b
+          .setIcon("refresh-cw")
+          .setTooltip(t("view.connect.reconnect"))
+          .onClick(async () => {
+            if (this.connecting) return;
+            this.connecting = integration.id;
+            b.setDisabled(true);
+            try {
+              await this.plugin.connectIntegration(integration.id);
+            } finally {
+              this.connecting = null;
+              await this.refresh();
+            }
+          }),
       );
-      status.addClass("ev-ok");
-      this.accessBadge(card, connected);
-      const edit = actions.createEl("button", { text: t("view.access.edit") });
-      edit.addEventListener("click", () => this.editAccess(connected));
-      button(t("view.connect.reconnect"), false, async () => void (await this.plugin.connectIntegration(integration.id)));
-      const off = actions.createEl("button", { text: t("view.connect.disconnect") });
-      off.addEventListener("click", () =>
-        new ConfirmModal(this.app, t("view.connect.disconnectConfirm", { client: integration.label }), () => this.plugin.revokeClient(connected.id)).open(),
+      row.addExtraButton((b) =>
+        b
+          .setIcon("unplug")
+          .setTooltip(t("view.connect.disconnect"))
+          .onClick(() =>
+            new ConfirmModal(this.app, t("view.connect.disconnectConfirm", { client: integration.label }), () => this.plugin.revokeClient(connected.id)).open(),
+          ),
       );
       return;
     }
 
     const known = this.detected.get(integration.id);
     if (known === undefined) {
-      status.setText(t("view.connect.checking"));
+      badge(row.nameEl, t("view.connect.checking"));
       void integration.detect().then((found) => {
         this.detected.set(integration.id, found);
         void this.refresh();
@@ -408,25 +420,28 @@ export class EnvironmentVariablesView extends ItemView {
       return;
     }
     if (!known) {
-      status.setText(t("view.connect.notFound"));
-      card.addClass("is-missing");
+      badge(row.nameEl, t("view.connect.notFound"));
+      row.settingEl.addClass("is-missing");
       return;
     }
-    const connect = actions.createEl("button", { text: t("view.connect.connect"), cls: "mod-cta" });
-    connect.addEventListener("click", () =>
-      new AccessModal(this.app, this.plugin.store, integration.label, null, async (access) => {
-        connect.disabled = true;
-        connect.setText(t("view.connect.connecting"));
-        await this.plugin.connectIntegration(integration.id, access);
-        await this.refresh();
-      }).open(),
+    row.addButton((b) =>
+      b
+        .setButtonText(t("view.connect.connect"))
+        .setCta()
+        .onClick(() =>
+          new AccessModal(this.app, this.plugin.store, integration.label, null, async (access) => {
+            b.setDisabled(true).setButtonText(t("view.connect.connecting"));
+            await this.plugin.connectIntegration(integration.id, access);
+            await this.refresh();
+          }).open(),
+        ),
     );
   }
 
   private accessBadge(parent: HTMLElement, client: ClientRecord): void {
     const access = accessOf(client);
     const text = access.mode === "all" ? t("view.access.all") : t("view.access.some", { n: access.secretIds.length });
-    parent.createSpan({ text, cls: `ev-badge ${access.mode === "all" ? "ev-badge-wide" : ""}` });
+    parent.createSpan({ text, cls: "ev-badge" });
   }
 
   private editAccess(client: ClientRecord): void {
@@ -435,25 +450,36 @@ export class EnvironmentVariablesView extends ItemView {
     ).open();
   }
 
+  // ---------- Logs ----------
+
   private renderLog(root: HTMLElement): void {
-    const details = root.createEl("details", { cls: "ev-section" });
-    details.createEl("summary", { text: t("view.log.title") });
+    const section = root.createDiv({ cls: "ev-section" });
     const entries = this.plugin.audit.list().slice(0, 100);
+    const heading = sectionHeading(section, t("view.section.logs"));
+    heading.addButton((b) =>
+      b
+        .setButtonText(t("view.log.clear"))
+        .setDisabled(entries.length === 0)
+        .onClick(() => this.plugin.audit.clear()),
+    );
     if (entries.length === 0) {
-      details.createDiv({ text: t("view.log.empty"), cls: "ev-muted" });
+      section.createDiv({ text: t("view.log.empty"), cls: "ev-muted ev-empty" });
       return;
     }
-    const table = details.createEl("table", { cls: "ev-log" });
+    const body = collapsible(section, t("view.log.show", { n: entries.length }), this.logOpen, (open) => (this.logOpen = open));
+    const wrap = body.createDiv({ cls: "ev-log-wrap" });
+    const table = wrap.createEl("table", { cls: "ev-log" });
+    const head = table.createEl("thead").createEl("tr");
+    for (const col of ["time", "client", "action", "variables", "result"] as const) head.createEl("th", { text: t(`view.log.col.${col}`) });
+    const tbody = table.createEl("tbody");
     for (const e of entries) {
-      const tr = table.createEl("tr", { cls: `ev-log-${e.outcome}` });
+      const tr = tbody.createEl("tr", { cls: `ev-log-${e.outcome}` });
       tr.createEl("td", { text: new Date(e.time).toLocaleString() });
       tr.createEl("td", { text: e.client });
       tr.createEl("td", { text: e.action === "list" ? "list_secrets" : e.action === "tool" ? `tool ${e.tool ?? ""}` : `${e.method ?? ""} ${e.target ?? ""}` });
       tr.createEl("td", { text: e.secrets.join(", ") });
       tr.createEl("td", { text: e.status ? `${e.outcome} ${e.status}` : e.outcome, attr: { title: e.detail ?? "" } });
     }
-    const clear = details.createEl("button", { text: t("view.log.clear") });
-    clear.addEventListener("click", () => this.plugin.audit.clear());
   }
 }
 
@@ -463,28 +489,39 @@ function passwordInput(parent: HTMLElement, placeholder: string): HTMLInputEleme
   return input;
 }
 
-/** A checkbox with a label; the description shows on hover. */
-function toolSwitch(parent: HTMLElement, label: string, desc: string, checked: boolean, disabled: boolean, onChange: (value: boolean) => Promise<void>): void {
-  const row = parent.createDiv({ cls: "ev-tool-switch", attr: { title: desc } });
-  const toggle = new ToggleComponent(row).setValue(checked).setDisabled(disabled);
-  row.createSpan({ text: label });
-  if (disabled) row.addClass("is-disabled");
-  let busy = false;
-  toggle.onChange((value) => {
-    if (busy) return;
-    busy = true;
-    toggle.setDisabled(true);
-    void onChange(value);
-  });
-  // Clicking the label switches too, like a label next to a checkbox.
-  row.addEventListener("click", (evt) => {
-    if (disabled || busy || toggle.toggleEl.contains(evt.target as Node)) return;
-    toggle.toggleEl.click();
-  });
+/** A section title in the style of Obsidian's settings headings, with a short description. */
+function sectionHeading(parent: HTMLElement, title: string): Setting {
+  return new Setting(parent).setName(title).setHeading().setClass("ev-section-heading");
 }
 
-function iconButton(parent: HTMLElement, icon: string, label: string, onClick: () => void): void {
-  const btn = parent.createEl("button", { cls: "clickable-icon ev-icon-btn", attr: { "aria-label": label } });
-  setIcon(btn, icon);
-  btn.addEventListener("click", onClick);
+/** A small label next to a name, optionally with an icon. */
+function badge(parent: HTMLElement, text: string, cls = "", icon?: string): HTMLElement {
+  const el = parent.createSpan({ cls: `ev-badge ${cls}`.trim() });
+  if (icon) setIcon(el.createSpan({ cls: "ev-badge-icon" }), icon);
+  el.createSpan({ text });
+  return el;
+}
+
+/** A smaller title inside a section, with an optional count, an info icon (text on hover) and room for actions. */
+function subHeading(parent: HTMLElement, title: string, opts: { count?: number; info?: string } = {}): HTMLElement {
+  const el = parent.createDiv({ cls: "ev-subheading" });
+  el.createSpan({ text: title, cls: "ev-subheading-title" });
+  if (opts.count !== undefined) el.createSpan({ text: String(opts.count), cls: "ev-badge" });
+  if (opts.info) {
+    const info = el.createSpan({ cls: "ev-subheading-info", attr: { tabindex: "0", "aria-label": opts.info } });
+    setIcon(info, "info");
+    setTooltip(info, opts.info);
+  }
+  return el;
+}
+
+/** A group that opens and closes, with a chevron like Obsidian's collapsible lists. Returns its body. */
+function collapsible(parent: HTMLElement, title: string, open: boolean, onToggle: (open: boolean) => void): HTMLElement {
+  const details = parent.createEl("details", { cls: "ev-group" });
+  details.open = open;
+  details.addEventListener("toggle", () => onToggle(details.open));
+  const summary = details.createEl("summary", { cls: "ev-group-title" });
+  setIcon(summary.createSpan({ cls: "ev-group-chevron" }), "chevron-right");
+  summary.createSpan({ text: title });
+  return details.createDiv({ cls: "ev-group-body" });
 }

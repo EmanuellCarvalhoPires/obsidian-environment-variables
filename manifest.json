@@ -1,7 +1,7 @@
 {
   "id": "environment-variables",
   "name": "Environment Variables",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "minAppVersion": "1.13.0",
   "description": "Hide API tokens and other sensitive data from AI agents such as Claude Code, Codex and Antigravity. Store them encrypted, reference them in notes by key, and let agents use them in requests without seeing the values.",
   "author": "Emanuell Pires",
