@@ -2,10 +2,14 @@ import { App, Notice, PluginSettingTab, Setting, SettingDefinitionItem, TextComp
 import { describeVault } from "../crypto/vaultFile";
 import { t } from "../i18n";
 import type EnvironmentVariablesPlugin from "../main";
+import { SERVER_NAME_PATTERN } from "../server/vaultIdentity";
 import { Settings } from "../settings";
 
 type NumberKey = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
 type BooleanKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
+type TextKey = { [K in keyof Settings]: Settings[K] extends string ? K : never }[keyof Settings];
+
+const TAG_PATTERN = /^[\p{L}\p{N}_-]+(\/[\p{L}\p{N}_-]+)*$/u;
 
 const RANGES: Record<NumberKey, [number, number]> = {
   port: [1024, 65535],
@@ -13,6 +17,7 @@ const RANGES: Record<NumberKey, [number, number]> = {
   approvalTimeoutSeconds: [10, 600],
   timeoutSeconds: [1, 600],
   maxResponseMB: [1, 200],
+  scriptTimeoutSeconds: [1, 600],
 };
 
 export class EnvironmentVariablesSettingTab extends PluginSettingTab {
@@ -30,7 +35,16 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
         heading: t("settings.server"),
         items: [
           { name: t("settings.serverEnabled"), desc: t("settings.serverEnabledDesc"), control: { type: "toggle", key: "serverEnabled" } },
-          { name: t("settings.port"), control: numberControl("port") },
+          { name: t("settings.port"), desc: t("settings.portDesc"), control: numberControl("port") },
+          {
+            name: t("settings.serverName"),
+            desc: t("settings.serverNameDesc"),
+            control: {
+              type: "text",
+              key: "mcpServerName",
+              validate: (v: string) => (SERVER_NAME_PATTERN.test(v.trim()) ? undefined : t("settings.serverNameInvalid")),
+            },
+          },
         ],
       },
       {
@@ -54,6 +68,17 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
+        heading: t("settings.tools"),
+        items: [
+          { name: t("settings.toolsEnabled"), desc: t("settings.toolsEnabledDesc"), control: { type: "toggle", key: "toolsEnabled" } },
+          { name: t("settings.scriptsEnabled"), desc: t("settings.scriptsEnabledDesc"), control: { type: "toggle", key: "scriptsEnabled" } },
+          { name: t("settings.toolTag"), desc: t("settings.toolTagDesc"), control: tagControl("toolTag", "mcp/tool") },
+          { name: t("settings.requestTag"), desc: t("settings.requestTagDesc"), control: tagControl("requestTag", "api/request") },
+          { name: t("settings.scriptTimeout"), control: numberControl("scriptTimeoutSeconds") },
+        ],
+      },
+      {
+        type: "group",
         heading: t("settings.storage"),
         items: [{ name: t("settings.storageFile"), render: (setting) => this.renderStorage(setting), searchable: false }],
       },
@@ -68,6 +93,14 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
     const s = this.plugin.data.settings;
     if (key === "serverEnabled") {
       await this.plugin.setServerEnabled(value === true);
+    } else if (key === "mcpServerName" && typeof value === "string") {
+      await this.plugin.setMcpServerName(value.trim());
+    } else if (key === "toolsEnabled") {
+      await this.plugin.setToolsEnabled(value === true);
+    } else if (isTextKey(key) && typeof value === "string") {
+      s[key] = value.trim().replace(/^#/, "");
+      await this.plugin.saveAll();
+      this.plugin.onToolSettingsChanged();
     } else if (isBooleanKey(key)) {
       s[key] = value === true;
       if (key === "showNamesWhileLocked") {
@@ -76,6 +109,7 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
         this.plugin.syncNameIndex();
       }
       await this.plugin.saveAll();
+      if (key === "scriptsEnabled") this.plugin.onToolSettingsChanged();
     } else if (isNumberKey(key) && typeof value === "number") {
       s[key] = value;
       await this.plugin.saveAll();
@@ -136,10 +170,23 @@ function numberControl(key: NumberKey) {
   };
 }
 
+function tagControl(key: TextKey, placeholder: string) {
+  return {
+    type: "text" as const,
+    key,
+    placeholder,
+    validate: (v: string) => (TAG_PATTERN.test(v.trim().replace(/^#/, "")) ? undefined : t("settings.tagInvalid")),
+  };
+}
+
+function isTextKey(key: string): key is TextKey {
+  return key === "toolTag" || key === "requestTag";
+}
+
 function isNumberKey(key: string): key is NumberKey {
   return key in RANGES;
 }
 
 function isBooleanKey(key: string): key is BooleanKey {
-  return key === "serverEnabled" || key === "warnOnTokenPaste" || key === "showNamesWhileLocked";
+  return key === "serverEnabled" || key === "warnOnTokenPaste" || key === "showNamesWhileLocked" || key === "toolsEnabled" || key === "scriptsEnabled";
 }
