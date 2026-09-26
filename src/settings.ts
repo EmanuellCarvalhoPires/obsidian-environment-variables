@@ -1,5 +1,6 @@
 import { AuditEntry } from "./audit/auditLog";
 import { ClientRecord } from "./server/clients";
+import { McpAppConfig, McpGroupConfig } from "./tools/mcpGroups";
 import { SecretType } from "./store/types";
 
 export interface Settings {
@@ -27,9 +28,13 @@ export interface Settings {
   scriptTimeoutSeconds: number;
   /** Language of the plugin: "auto" follows Obsidian's language. */
   language: LanguageSetting;
+  /** Base raw URL of the repo the "Download MCP" screen reads its catalog from. */
+  mcpCatalogUrl: string;
 }
 
 export type LanguageSetting = "auto" | "en" | "pt-BR";
+
+export const DEFAULT_MCP_CATALOG_URL = "https://raw.githubusercontent.com/EmanuellCarvalhoPires/environment-keys-mcp-packages/main";
 
 export const DEFAULT_SETTINGS: Settings = {
   serverEnabled: false,
@@ -47,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   requestTag: "api/request",
   scriptTimeoutSeconds: 30,
   language: "auto",
+  mcpCatalogUrl: DEFAULT_MCP_CATALOG_URL,
 };
 
 /** Name and type of a variable: enough to write a reference, never the value. */
@@ -62,6 +68,10 @@ export interface PluginData {
   audit: AuditEntry[];
   /** Names and types only, so references can be inserted while the vault is locked. */
   nameIndex: NameEntry[];
+  /** User-defined MCP groupings (e.g. "Jira Cloud MCP"): a name, a logo and which tools count as members. */
+  mcpGroups: McpGroupConfig[];
+  /** Two-level grouping: an app card (e.g. "Atlassian") that lists one or more of the MCPs above. */
+  mcpApps: McpAppConfig[];
   /** Settings migrations already applied (see migrate). */
   settingsRevision: number;
 }
@@ -83,5 +93,9 @@ export function withDefaults(raw: Partial<PluginData> | null | undefined): Plugi
     nameIndex: Array.isArray(raw?.nameIndex)
       ? raw.nameIndex.filter((e): e is NameEntry => typeof e?.name === "string" && typeof e?.type === "string")
       : [],
+    mcpGroups: Array.isArray(raw?.mcpGroups)
+      ? raw.mcpGroups.filter((g): g is McpGroupConfig => typeof g?.id === "string" && typeof g?.name === "string" && Array.isArray(g?.links))
+      : [],
+    mcpApps: Array.isArray(raw?.mcpApps) ? raw.mcpApps.filter((a): a is McpAppConfig => typeof a?.id === "string" && typeof a?.name === "string") : [],
   };
 }

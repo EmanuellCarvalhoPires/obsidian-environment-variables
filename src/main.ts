@@ -1,4 +1,4 @@
-import { Editor, FileSystemAdapter, Notice, Plugin, setIcon } from "obsidian";
+import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon } from "obsidian";
 import { AuditLog } from "./audit/auditLog";
 import { Broker } from "./engine/broker";
 import { detectToken } from "./engine/tokenPatterns";
@@ -14,13 +14,32 @@ import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIde
 import { LanguageSetting, NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
 import { buildGuide, GuideMode } from "./tools/guide";
+import {
+  appForEntry,
+  fetchCatalog,
+  fetchPackageManifest,
+  filesToInstall,
+  McpCatalog,
+  McpCatalogEntry,
+  McpDownloadSelection,
+  McpPackageManifest,
+  needsServiceTemplate,
+  serviceTemplateFileName,
+} from "./tools/mcpCatalog";
+import { computeMcpGroupStats, matchedNotePaths, McpAppConfig, McpGroupConfig, McpGroupStats, randomGroupId } from "./tools/mcpGroups";
+import { HttpGithubReader } from "./tools/githubReader";
 import { ObsidianNoteSource } from "./tools/obsidianSource";
 import { ToolRegistry } from "./tools/registry";
+import { NoteSource } from "./tools/types";
 import { ScriptRunner } from "./tools/scriptRunner";
 import { ToolsService } from "./tools/service";
+import { defaultLogoFor } from "./ui/defaultLogos";
 import { ApprovalModal, referenceFor, SecretModal, SecretPickerModal } from "./ui/modals";
 import { EnvironmentVariablesSettingTab } from "./ui/settingsTab";
 import { EnvironmentVariablesView, ICON_LOCKED, ICON_UNLOCKED, VIEW_TYPE } from "./ui/view";
+
+/** Note that anchors every downloaded MCP package: reused by name if the vault already has one. */
+const MCP_HUB_NOTE_NAME = "MCP Tools";
 
 /** How many ports to try, upward from the configured one, when another vault or program holds it. */
 const MAX_PORT_TRIES = 20;
@@ -33,6 +52,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   server: LocalServer | null = null;
   registry!: ToolRegistry;
   tools!: ToolsService;
+  /** Read access to the vault's notes, shared with MCP groups to resolve their tag/link filters. */
+  toolSource!: NoteSource;
   /** Who runs a tool from the panel: the user, with access to every variable. */
   readonly localClient: ClientContext = { id: "obsidian", name: "Obsidian", access: { mode: "all" } };
 
@@ -87,6 +108,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
     // Vault tools: MCP tools defined by notes, found by tag.
     const source = new ObsidianNoteSource(this.app);
+    this.toolSource = source;
     const s = () => this.data.settings;
     this.registry = new ToolRegistry(
       source,
@@ -517,6 +539,213 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       this.toolScanTimer = undefined;
       void this.registry.ensureFresh();
     }, 300);
+  }
+
+  // ---------- MCP groups ----------
+
+  /** Every MCP group with its tool count and request count, computed fresh from the registry and the audit log. */
+  mcpGroupStats(): McpGroupStats[] {
+    const entries = this.registry.list();
+    const audit = this.audit.list();
+    return this.data.mcpGroups.map((g) => computeMcpGroupStats(g, entries, this.toolSource, audit));
+  }
+
+  async addMcpGroup(group: McpGroupConfig): Promise<void> {
+    this.data.mcpGroups.push(group);
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  async updateMcpGroup(group: McpGroupConfig): Promise<void> {
+    const i = this.data.mcpGroups.findIndex((g) => g.id === group.id);
+    if (i === -1) return;
+    this.data.mcpGroups[i] = group;
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  /** Removes the grouping, and — when asked — trashes the notes it currently matches. */
+  async removeMcpGroup(id: string, deleteNotes = false): Promise<void> {
+    const group = this.data.mcpGroups.find((g) => g.id === id);
+    if (deleteNotes && group) {
+      for (const path of matchedNotePaths(group, this.toolSource)) {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file) await this.app.fileManager.trashFile(file);
+      }
+    }
+    this.data.mcpGroups = this.data.mcpGroups.filter((g) => g.id !== id);
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  async setMcpGroupEnabled(id: string, enabled: boolean): Promise<void> {
+    const group = this.data.mcpGroups.find((g) => g.id === id);
+    if (!group) return;
+    group.enabled = enabled;
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  async addMcpApp(app: McpAppConfig): Promise<void> {
+    this.data.mcpApps.push(app);
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  async updateMcpApp(app: McpAppConfig): Promise<void> {
+    const i = this.data.mcpApps.findIndex((a) => a.id === app.id);
+    if (i === -1) return;
+    this.data.mcpApps[i] = app;
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  /** Removes the app card. Its MCPs are kept, just no longer grouped under it. */
+  async removeMcpApp(id: string): Promise<void> {
+    this.data.mcpApps = this.data.mcpApps.filter((a) => a.id !== id);
+    for (const g of this.data.mcpGroups) if (g.appId === id) g.appId = undefined;
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  async setMcpAppEnabled(id: string, enabled: boolean): Promise<void> {
+    const app = this.data.mcpApps.find((a) => a.id === id);
+    if (!app) return;
+    app.enabled = enabled;
+    await this.saveAll();
+    this.emitServerChange();
+  }
+
+  // ---------- Download MCP: ready-made packages fetched from GitHub ----------
+
+  private githubReader(): HttpGithubReader {
+    return new HttpGithubReader(this.data.settings.mcpCatalogUrl);
+  }
+
+  fetchMcpCatalog(): Promise<McpCatalog> {
+    return fetchCatalog(this.githubReader());
+  }
+
+  fetchMcpPackageManifest(entry: McpCatalogEntry): Promise<McpPackageManifest> {
+    return fetchPackageManifest(this.githubReader(), entry);
+  }
+
+  /** The note every downloaded package links up to, reused by name if the vault already has one. */
+  private async ensureMcpHubNote(): Promise<string> {
+    const existing = this.app.vault.getMarkdownFiles().find((f) => f.basename === MCP_HUB_NOTE_NAME);
+    if (existing) return existing.parent?.path ?? "";
+    const content = [
+      "---",
+      "tags:",
+      "  - moc",
+      "  - mcp",
+      "---",
+      `# ${MCP_HUB_NOTE_NAME}`,
+      "",
+      "Index of the MCP tool packages downloaded through Environment Keys.",
+      "",
+      "## Related notes",
+      "```dataview",
+      "LIST FROM [[]] WHERE contains(flat(list(up)), this.file.link)",
+      "SORT file.name ASC",
+      "```",
+      "",
+    ].join("\n");
+    await this.app.vault.create(`${MCP_HUB_NOTE_NAME}.md`, content);
+    return "";
+  }
+
+  /**
+   * Downloads a package (or one of its tools) into the vault: existing files are left untouched,
+   * and the package is registered as an MCP group so its stats show up in the panel.
+   * `onProgress` is called after each file is fetched (written or skipped), for a progress bar.
+   */
+  async downloadMcpPackage(
+    entry: McpCatalogEntry,
+    manifest: McpPackageManifest,
+    selection: McpDownloadSelection,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ written: number; skipped: number; templateCreated: boolean }> {
+    const reader = this.githubReader();
+    const hubFolder = await this.ensureMcpHubNote();
+    const packageFolder = normalizePath(hubFolder ? `${hubFolder}/${entry.name}` : entry.name);
+    const files = filesToInstall(manifest, selection);
+
+    const madeFolders = new Set<string>();
+    let written = 0;
+    let skipped = 0;
+    for (const file of files) {
+      const target = normalizePath(`${packageFolder}/${file.path}`);
+      if (this.app.vault.getAbstractFileByPath(target)) {
+        skipped++;
+      } else {
+        const folder = target.slice(0, target.lastIndexOf("/"));
+        if (folder && !madeFolders.has(folder)) {
+          madeFolders.add(folder);
+          if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+        }
+        const content = await reader.fetchText(`${entry.path}/${file.path}`);
+        await this.app.vault.create(target, content);
+        written++;
+      }
+      onProgress?.(written + skipped, files.length);
+    }
+
+    const templateCreated = await this.ensureServiceTemplate(reader, entry, hubFolder);
+    this.upsertMcpGroupForPackage(entry);
+    await this.saveAll();
+    this.emitServerChange();
+    return { written, skipped, templateCreated };
+  }
+
+  /**
+   * The first time a package needs a service (serviceTag) the vault has no instance of yet,
+   * downloads that service's template note into an "Instances" folder next to the hub note.
+   */
+  private async ensureServiceTemplate(reader: HttpGithubReader, entry: McpCatalogEntry, hubFolder: string): Promise<boolean> {
+    if (!entry.serviceTag || !entry.serviceTemplate) return false;
+    if (!needsServiceTemplate(entry, this.toolSource.byTag(entry.serviceTag))) return false;
+    const folder = normalizePath(hubFolder ? `${hubFolder}/Instances` : "Instances");
+    if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+    const target = normalizePath(`${folder}/${serviceTemplateFileName(entry.serviceTag)}`);
+    if (this.app.vault.getAbstractFileByPath(target)) return false;
+    const content = await reader.fetchText(entry.serviceTemplate);
+    await this.app.vault.create(target, content);
+    return true;
+  }
+
+  /**
+   * Finds the app card a package belongs to (by name), creating it the first time a package
+   * of that app is downloaded. Returns undefined when the package isn't tied to any app.
+   */
+  private ensureMcpAppForPackage(entry: McpCatalogEntry): string | undefined {
+    const info = appForEntry(entry);
+    if (!info) return undefined;
+    const existing = this.data.mcpApps.find((a) => a.name.trim().toLowerCase() === info.name.toLowerCase());
+    if (existing) return existing.id;
+    const app: McpAppConfig = { id: randomGroupId(), name: info.name, logo: defaultLogoFor(info.logo), enabled: true };
+    this.data.mcpApps.push(app);
+    return app.id;
+  }
+
+  /** Registers the package as an MCP group on first download; later downloads just update its files. */
+  private upsertMcpGroupForPackage(entry: McpCatalogEntry): void {
+    const appId = this.ensureMcpAppForPackage(entry);
+    const existing = this.data.mcpGroups.find((g) => g.sourcePackageId === entry.id);
+    if (existing) {
+      if (!existing.appId && appId) existing.appId = appId;
+      return;
+    }
+    this.data.mcpGroups.push({
+      id: randomGroupId(),
+      name: entry.name,
+      logo: defaultLogoFor(entry.logo),
+      enabled: true,
+      tag: entry.tag,
+      links: [],
+      appId,
+      sourcePackageId: entry.id,
+    });
   }
 
   /** The prompt for AI agents, in the language of Obsidian. Generic: it names nothing of this vault. */

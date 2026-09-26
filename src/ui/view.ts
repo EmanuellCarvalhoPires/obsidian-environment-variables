@@ -1,4 +1,4 @@
-import { ItemView, Notice, setIcon, Setting, setTooltip, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, setIcon, Setting, setTooltip, ToggleComponent, WorkspaceLeaf } from "obsidian";
 import { WrongPasswordError } from "../crypto/vaultFile";
 import { t } from "../i18n";
 import { Integration, IntegrationId, INTEGRATIONS } from "../integrations/integrations";
@@ -9,8 +9,12 @@ import { wildcardRisk } from "../engine/hosts";
 import { accessOf, ClientAccess, ClientRecord } from "../server/clients";
 import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal } from "./modals";
 import { GUIDE_MODES, GuideMode } from "../tools/guide";
+import { McpAppConfig, McpGroupConfig, McpGroupStats, newMcpApp, newMcpGroup } from "../tools/mcpGroups";
 import { ToolEntry } from "../tools/types";
 import { iconLine } from "./dom";
+import { McpAppModal } from "./mcpAppModal";
+import { McpDownloadModal } from "./mcpDownloadModal";
+import { McpGroupModal } from "./mcpGroupModal";
 import { ToolRunModal } from "./toolModals";
 
 export const VIEW_TYPE = "environment-variables-view";
@@ -177,6 +181,7 @@ export class EnvironmentVariablesView extends ItemView {
     this.renderServerHeader(root);
     this.renderSecrets(root);
     this.renderMcp(root);
+    this.renderMcpGroups(root);
     this.renderLog(root);
   }
 
@@ -448,6 +453,161 @@ export class EnvironmentVariablesView extends ItemView {
     new AccessModal(this.app, this.plugin.store, client.name, accessOf(client), (access: ClientAccess) =>
       this.plugin.setClientAccess(client.id, access),
     ).open();
+  }
+
+  // ---------- MCP groups (two levels: an optional app card lists one or more MCPs) ----------
+
+  private renderMcpGroups(root: HTMLElement): void {
+    const section = root.createDiv({ cls: "ev-section" });
+    const heading = sectionHeading(section, t("view.section.mcpGroups"));
+    heading.addButton((b) => b.setButtonText(t("view.mcpGroups.addApp")).onClick(() => this.openMcpAppModal(null)));
+    heading.addButton((b) =>
+      b.setButtonText(t("view.mcpGroups.download")).onClick(() => new McpDownloadModal(this.app, this.plugin, () => void this.refresh()).open()),
+    );
+    heading.addButton((b) =>
+      b
+        .setButtonText(t("view.mcpGroups.add"))
+        .setCta()
+        .onClick(() => this.openMcpGroupModal(null)),
+    );
+
+    const apps = this.plugin.data.mcpApps;
+    const stats = this.plugin.mcpGroupStats();
+    const byApp = new Map<string, McpGroupStats[]>();
+    const standalone: McpGroupStats[] = [];
+    for (const group of stats) {
+      if (group.appId && apps.some((a) => a.id === group.appId)) {
+        const list = byApp.get(group.appId);
+        if (list) list.push(group);
+        else byApp.set(group.appId, [group]);
+      } else standalone.push(group);
+    }
+
+    if (apps.length === 0 && standalone.length === 0) {
+      section.createDiv({ text: t("view.mcpGroups.empty"), cls: "ev-muted ev-empty" });
+      return;
+    }
+    for (const app of apps) this.renderMcpAppCard(section, app, byApp.get(app.id) ?? []);
+    for (const group of standalone) this.renderMcpGroupCard(section, group);
+  }
+
+  private openMcpGroupModal(existing: McpGroupStats | null): void {
+    // Only the plain config fields go to the modal: the stats are computed, never edited or saved.
+    const target: McpGroupConfig = existing
+      ? {
+          id: existing.id,
+          name: existing.name,
+          logo: existing.logo,
+          enabled: existing.enabled,
+          tag: existing.tag,
+          links: existing.links,
+          appId: existing.appId,
+          sourcePackageId: existing.sourcePackageId,
+        }
+      : newMcpGroup();
+    new McpGroupModal(this.app, this.plugin.data.mcpApps, this.plugin.data.mcpGroups, target, (updated) =>
+      existing ? this.plugin.updateMcpGroup(updated) : this.plugin.addMcpGroup(updated),
+    ).open();
+  }
+
+  private openMcpAppModal(existing: McpAppConfig | null): void {
+    const target = existing ?? newMcpApp();
+    new McpAppModal(this.app, this.plugin.data.mcpApps, target, (updated) =>
+      existing ? this.plugin.updateMcpApp(updated) : this.plugin.addMcpApp(updated),
+    ).open();
+  }
+
+  private renderMcpAppCard(parent: HTMLElement, app: McpAppConfig, items: McpGroupStats[]): void {
+    const card = parent.createDiv({ cls: "ev-mcp-card" });
+    const header = card.createDiv({ cls: "ev-mcp-card-header" });
+
+    const title = header.createDiv({ cls: "ev-mcp-card-title" });
+    const icon = title.createDiv({ cls: "ev-mcp-item-icon" });
+    if (app.logo) icon.createEl("img", { attr: { src: app.logo, alt: "" } });
+    else setIcon(icon, "boxes");
+    const text = title.createDiv();
+    text.createDiv({ text: app.name, cls: "ev-mcp-card-heading" });
+    text.createDiv({ text: t(items.length === 1 ? "view.mcpGroups.appSubtitleOne" : "view.mcpGroups.appSubtitle", { n: items.length }), cls: "ev-mcp-card-subtitle" });
+
+    const actions = header.createDiv({ cls: "ev-mcp-card-actions" });
+    new ToggleComponent(actions).setValue(app.enabled).onChange((v) => void this.plugin.setMcpAppEnabled(app.id, v));
+    const editBtn = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.mcpGroups.edit") } });
+    setIcon(editBtn, "pencil");
+    editBtn.addEventListener("click", () => this.openMcpAppModal(app));
+    const delBtn = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.mcpGroups.delete") } });
+    setIcon(delBtn, "trash-2");
+    delBtn.addEventListener("click", () =>
+      new ConfirmModal(this.app, t("view.mcpGroups.deleteAppConfirm", { name: app.name }), () => this.plugin.removeMcpApp(app.id)).open(),
+    );
+
+    if (items.length === 0) card.createDiv({ text: t("view.mcpGroups.appEmpty"), cls: "ev-muted ev-empty" });
+    else {
+      const list = card.createDiv({ cls: "ev-mcp-items" });
+      for (const item of items) this.renderMcpItemRow(list, item);
+    }
+  }
+
+  private renderMcpItemRow(parent: HTMLElement, item: McpGroupStats): void {
+    const row = parent.createDiv({ cls: "ev-mcp-item" });
+
+    const icon = row.createDiv({ cls: "ev-mcp-item-icon" });
+    if (item.logo) icon.createEl("img", { attr: { src: item.logo, alt: "" } });
+    else setIcon(icon, "layers");
+
+    const info = row.createDiv({ cls: "ev-mcp-item-info" });
+    info.createDiv({ text: item.name, cls: "ev-mcp-item-name" });
+    const stats = info.createDiv({ cls: "ev-mcp-item-stats" });
+    stats.createSpan({ text: t("view.mcpGroups.toolCount", { n: item.toolCount }) });
+    stats.createSpan({ text: t("view.mcpGroups.requestCount", { n: item.requestCount }) });
+
+    const controls = row.createDiv({ cls: "ev-mcp-item-controls" });
+    new ToggleComponent(controls).setValue(item.enabled).onChange((v) => void this.plugin.setMcpGroupEnabled(item.id, v));
+    const editBtn = controls.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.mcpGroups.edit") } });
+    setIcon(editBtn, "pencil");
+    editBtn.addEventListener("click", () => this.openMcpGroupModal(item));
+    const delBtn = controls.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.mcpGroups.delete") } });
+    setIcon(delBtn, "trash-2");
+    delBtn.addEventListener("click", () =>
+      new ConfirmModal(
+        this.app,
+        t("view.mcpGroups.deleteConfirm", { name: item.name }),
+        (deleteNotes) => this.plugin.removeMcpGroup(item.id, deleteNotes),
+        { label: t("view.mcpGroups.deleteNotesToo", { n: item.toolCount }) },
+      ).open(),
+    );
+  }
+
+  private renderMcpGroupCard(parent: HTMLElement, group: McpGroupStats): void {
+    const card = parent.createDiv({ cls: "ev-mcp-card" });
+    const header = card.createDiv({ cls: "ev-mcp-card-header" });
+
+    const title = header.createDiv({ cls: "ev-mcp-card-title" });
+    const icon = title.createDiv({ cls: "ev-mcp-item-icon" });
+    if (group.logo) icon.createEl("img", { attr: { src: group.logo, alt: "" } });
+    else setIcon(icon, "layers");
+    const text = title.createDiv();
+    text.createDiv({ text: group.name, cls: "ev-mcp-card-heading" });
+    text.createDiv({ text: group.tag || t("view.mcpGroups.noTag"), cls: "ev-mcp-card-subtitle" });
+
+    const actions = header.createDiv({ cls: "ev-mcp-card-actions" });
+    new ToggleComponent(actions).setValue(group.enabled).onChange((v) => void this.plugin.setMcpGroupEnabled(group.id, v));
+    const editBtn = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.mcpGroups.edit") } });
+    setIcon(editBtn, "pencil");
+    editBtn.addEventListener("click", () => this.openMcpGroupModal(group));
+    const delBtn = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.mcpGroups.delete") } });
+    setIcon(delBtn, "trash-2");
+    delBtn.addEventListener("click", () =>
+      new ConfirmModal(
+        this.app,
+        t("view.mcpGroups.deleteConfirm", { name: group.name }),
+        (deleteNotes) => this.plugin.removeMcpGroup(group.id, deleteNotes),
+        { label: t("view.mcpGroups.deleteNotesToo", { n: group.toolCount }) },
+      ).open(),
+    );
+
+    const stats = card.createDiv({ cls: "ev-mcp-card-stats" });
+    stats.createSpan({ text: t("view.mcpGroups.toolCount", { n: group.toolCount }) });
+    stats.createSpan({ text: t("view.mcpGroups.requestCount", { n: group.requestCount }) });
   }
 
   // ---------- Logs ----------
