@@ -266,16 +266,26 @@ export class ApprovalModal extends Modal {
 }
 
 export class ConfirmModal extends Modal {
+  private checked: boolean;
+
   constructor(
     app: App,
     private readonly message: string,
-    private readonly onConfirm: () => void | Promise<void>,
+    private readonly onConfirm: (checked: boolean) => void | Promise<void>,
+    /** An extra opt-in toggle shown above the buttons, e.g. "also delete the matched notes". */
+    private readonly checkbox?: { label: string; initial?: boolean },
   ) {
     super(app);
+    this.checked = checkbox?.initial ?? false;
   }
 
   onOpen(): void {
     this.contentEl.createEl("p", { text: this.message });
+    if (this.checkbox) {
+      new Setting(this.contentEl)
+        .setName(this.checkbox.label)
+        .addToggle((tg) => tg.setValue(this.checked).onChange((v) => (this.checked = v)));
+    }
     new Setting(this.contentEl)
       .addButton((b) => b.setButtonText(t("modal.secret.cancel")).onClick(() => this.close()))
       .addButton((b) =>
@@ -284,7 +294,7 @@ export class ConfirmModal extends Modal {
           .setDestructive()
           .onClick(() => {
             this.close();
-            void this.onConfirm();
+            void this.onConfirm(this.checked);
           }),
       );
   }
