@@ -1,12 +1,20 @@
 name: Release
 
-# Pushing a tag such as 1.0.0 builds the plugin and publishes a release with
-# main.js, manifest.json and styles.css. The tag must match manifest.json.
+# Publishes a release with main.js, manifest.json and styles.css, either by
+# pushing a tag such as 1.0.0 or by running this workflow by hand (Actions >
+# Release > Run workflow), which creates the tag itself on the chosen branch.
+# Either way the version must match manifest.json.
 
 on:
   push:
     tags:
       - "*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (leave empty to use manifest.json)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -23,14 +31,27 @@ jobs:
         with:
           node-version: 22
 
-      - name: Check that the tag matches manifest.json
+      - name: Resolve the version and check it matches manifest.json
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          version="$(node -p "require('./manifest.json').version")"
-          if [ "$tag" != "$version" ]; then
-            echo "Tag $tag does not match manifest.json version $version." >&2
+          manifest="$(node -p "require('./manifest.json').version")"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="${INPUT_VERSION:-$manifest}"
+            if gh release view "$tag" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "Version $tag was already released. Bump manifest.json first." >&2
+              exit 1
+            fi
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          if [ "$tag" != "$manifest" ]; then
+            echo "Version $tag does not match manifest.json version $manifest." >&2
             exit 1
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - run: npm ci
       - run: npm run lint
@@ -47,6 +68,6 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          gh release create "$tag" main.js manifest.json styles.css --title "$tag" --generate-notes
+          gh release create "$TAG" main.js manifest.json styles.css --title "$TAG" --target "$GITHUB_SHA" --generate-notes
