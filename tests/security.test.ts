@@ -273,3 +273,38 @@ describe("allowAnyHost", () => {
     expect(prepareRequest({ url: "https://other.example.org/", headers: H }, lookupOf(s)).needsApproval).toBe(true);
   });
 });
+
+// ---------- full access ----------
+
+describe("fullAccess", () => {
+  const full = (extra = {}) => record({ allowedHosts: [], fullAccess: true, approval: "always", ...extra });
+
+  it("allows any https host with no approval, for reads and writes", () => {
+    const get = prepareRequest({ url: "https://anything.example.org/x", headers: H }, lookupOf(full()));
+    expect(get.needsApproval).toBe(false);
+    const post = prepareRequest({ method: "POST", url: "https://anything.example.org/x", headers: H }, lookupOf(full()));
+    expect(post.needsApproval).toBe(false);
+  });
+
+  it("wins over allowAnyHost, which alone would always ask", () => {
+    const p = prepareRequest({ url: "https://a.example.org/", headers: H }, lookupOf(full({ allowAnyHost: true })));
+    expect(p.needsApproval).toBe(false);
+  });
+
+  it("still asks when another secret in the same request needs approval", () => {
+    const other = record({ name: "OTHER", allowedHosts: [], allowAnyHost: true });
+    const lookup = (n: string) => (n === "OTHER" ? other : full());
+    const p = prepareRequest({ url: "https://a.example.org/", headers: { A: "{{secret:JIRA_ACME}}", B: "{{secret:OTHER}}" } }, lookup);
+    expect(p.needsApproval).toBe(true);
+  });
+
+  it("still refuses plain http and the placement rules", () => {
+    expect(code(() => prepareRequest({ url: "http://anything.example.org/", headers: H }, lookupOf(full())))).toBe("insecure_scheme");
+    expect(code(() => prepareRequest({ url: "https://a.example.org/?t={{secret:JIRA_ACME}}" }, lookupOf(full())))).toBe("placement_not_allowed");
+  });
+
+  it("follows redirects to another https origin", () => {
+    const p = prepareRequest({ url: "https://a.example.org/x", headers: H }, lookupOf(full({ allowAnyHost: true })));
+    expect(p.redirectDecision(new URL("https://b.example.org/y"), 302)).toBe("follow");
+  });
+});
