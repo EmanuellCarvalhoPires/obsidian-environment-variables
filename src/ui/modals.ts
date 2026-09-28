@@ -12,7 +12,8 @@ const TYPES: SecretType[] = ["token", "basic", "bearer", "header", "env"];
 const APPROVALS: ApprovalPolicy[] = ["never", "writes", "always"];
 
 /** Hosts shown next to a variable. Never contains a value. */
-export function hostsLabel(secret: Pick<SecretRecord, "allowedHosts" | "allowAnyHost">): string {
+export function hostsLabel(secret: Pick<SecretRecord, "allowedHosts" | "allowAnyHost" | "fullAccess">): string {
+  if (secret.fullAccess === true) return t("view.fullAccess");
   if (secret.allowAnyHost === true) return t("view.anyHost");
   return secret.allowedHosts.length ? secret.allowedHosts.join(", ") : t("view.noHosts");
 }
@@ -43,6 +44,7 @@ export class SecretModal extends Modal {
       description: "",
       allowedHosts: [],
       allowAnyHost: false,
+      fullAccess: false,
       allowHttpLocalhost: false,
       placement: { headers: true as const, url: false, body: false },
       approval: "writes" as ApprovalPolicy,
@@ -55,6 +57,7 @@ export class SecretModal extends Modal {
       description: base.description,
       allowedHosts: [...base.allowedHosts],
       allowAnyHost: base.allowAnyHost === true,
+      fullAccess: base.fullAccess === true,
       allowHttpLocalhost: base.allowHttpLocalhost,
       placement: { ...base.placement },
       approval: base.approval,
@@ -109,27 +112,40 @@ export class SecretModal extends Modal {
       txt.setValue(this.draft.description).onChange((v) => (this.draft.description = v)),
     );
 
-    const anyHost = new Setting(contentEl)
-      .setName(t("modal.secret.anyHost"))
-      .setDesc(t("modal.secret.anyHostDesc"))
+    const fullAccess = new Setting(contentEl)
+      .setName(t("modal.secret.fullAccess"))
+      .setDesc(t("modal.secret.fullAccessDesc"))
       .addToggle((tg) =>
-        tg.setValue(this.draft.allowAnyHost === true).onChange((v) => {
-          this.draft.allowAnyHost = v;
+        tg.setValue(this.draft.fullAccess === true).onChange((v) => {
+          this.draft.fullAccess = v;
           this.render();
         }),
       );
-    if (this.draft.allowAnyHost) anyHost.descEl.addClass("ev-warning");
+    fullAccess.descEl.addClass("ev-warning");
 
-    if (!this.draft.allowAnyHost) {
-      new Setting(contentEl)
-        .setName(t("modal.secret.hosts"))
-        .setDesc(t("modal.secret.hostsDesc"))
-        .addTextArea((ta) => {
-          ta.inputEl.rows = 3;
-          ta.setPlaceholder("acme.atlassian.net")
-            .setValue(this.draft.allowedHosts.join("\n"))
-            .onChange((v) => (this.draft.allowedHosts = v.split(/[\n,]/).map((h) => h.trim()).filter(Boolean)));
-        });
+    if (!this.draft.fullAccess) {
+      const anyHost = new Setting(contentEl)
+        .setName(t("modal.secret.anyHost"))
+        .setDesc(t("modal.secret.anyHostDesc"))
+        .addToggle((tg) =>
+          tg.setValue(this.draft.allowAnyHost === true).onChange((v) => {
+            this.draft.allowAnyHost = v;
+            this.render();
+          }),
+        );
+      if (this.draft.allowAnyHost) anyHost.descEl.addClass("ev-warning");
+
+      if (!this.draft.allowAnyHost) {
+        new Setting(contentEl)
+          .setName(t("modal.secret.hosts"))
+          .setDesc(t("modal.secret.hostsDesc"))
+          .addTextArea((ta) => {
+            ta.inputEl.rows = 3;
+            ta.setPlaceholder("acme.atlassian.net")
+              .setValue(this.draft.allowedHosts.join("\n"))
+              .onChange((v) => (this.draft.allowedHosts = v.split(/[\n,]/).map((h) => h.trim()).filter(Boolean)));
+          });
+      }
     }
 
     new Setting(contentEl).setName(t("modal.secret.approval")).addDropdown((dd) => {
@@ -160,6 +176,12 @@ export class SecretModal extends Modal {
   }
 
   private async save(): Promise<void> {
+    if (this.draft.fullAccess) {
+      // Full access skips the approval dialog entirely: confirm once, not on every later edit.
+      if (this.existing?.fullAccess === true) return this.commit();
+      new ConfirmModal(this.app, t("modal.secret.fullAccessConfirm", { name: this.draft.name || "?" }), () => this.commit()).open();
+      return;
+    }
     if (this.draft.allowAnyHost) {
       // Turning it on is a deliberate choice: confirm once, not on every later edit.
       if (this.existing?.allowAnyHost === true) return this.commit();

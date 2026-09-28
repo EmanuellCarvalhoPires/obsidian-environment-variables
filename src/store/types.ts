@@ -28,6 +28,11 @@ export interface SecretRecord {
    * needs approval and never follows a redirect to another origin. Off when missing.
    */
   allowAnyHost?: boolean;
+  /**
+   * Full access: allow any https host AND skip the approval dialog entirely
+   * (allowedHosts and allowAnyHost are then ignored). Off when missing.
+   */
+  fullAccess?: boolean;
   /** Allow plain http:// to localhost/127.0.0.1 (for local services). */
   allowHttpLocalhost: boolean;
   placement: SecretPlacement;

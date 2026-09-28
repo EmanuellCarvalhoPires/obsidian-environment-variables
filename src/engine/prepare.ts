@@ -124,7 +124,9 @@ export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit
   const usedSecrets = [...used.values()];
   // A secret without a host list can be sent anywhere, so the user checks every destination.
   const needsApproval = usedSecrets.some(
-    (s) => s.allowAnyHost === true || s.approval === "always" || (s.approval === "writes" && !READ_METHODS.has(method)),
+    (s) =>
+      s.fullAccess !== true &&
+      (s.allowAnyHost === true || s.approval === "always" || (s.approval === "writes" && !READ_METHODS.has(method))),
   );
   const origin = url.origin;
 
@@ -144,7 +146,7 @@ export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit
       const bodyResent = status === 307 || status === 308;
       if (!sameOrigin && (placements.url || (placements.body && bodyResent))) return "stop";
       // The user approved one origin; a redirect must not take an any-host secret elsewhere.
-      if (!sameOrigin && usedSecrets.some((s) => s.allowAnyHost === true)) return "stop";
+      if (!sameOrigin && usedSecrets.some((s) => s.allowAnyHost === true && s.fullAccess !== true)) return "stop";
       // Every secret must be allowed at the new destination (host, port, path prefix, scheme).
       for (const s of usedSecrets) {
         if (!destinationAllowed(s, next)) return "stop";
@@ -197,6 +199,7 @@ export function destinationAllowed(secret: SecretRecord, url: URL): boolean {
   } else if (url.protocol !== "https:") {
     return false;
   }
+  if (secret.fullAccess === true) return true;
   if (secret.allowAnyHost === true) return true;
   if (secret.allowedHosts.length === 0) return false;
   return urlAllowed(url, secret.allowedHosts);
@@ -204,7 +207,7 @@ export function destinationAllowed(secret: SecretRecord, url: URL): boolean {
 
 /** `display` is the pre-substitution target, so error messages never contain a value. */
 function checkDestination(secret: SecretRecord, url: URL, display: string): void {
-  if (secret.allowedHosts.length === 0 && secret.allowAnyHost !== true) {
+  if (secret.allowedHosts.length === 0 && secret.allowAnyHost !== true && secret.fullAccess !== true) {
     throw new PolicyError("host_not_allowed", `${secret.name} has no allowed hosts configured.`);
   }
   if (url.protocol === "http:" && !(secret.allowHttpLocalhost && isLocalhost(url))) {
