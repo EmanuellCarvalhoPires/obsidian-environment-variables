@@ -82,6 +82,11 @@ export interface McpPackageFile {
   writes?: boolean;
   /** kind: tool — the request file it needs, or null when it has none. */
   pair?: string | null;
+  /**
+   * kind: tool — further request files it needs besides `pair`, e.g. a `kind: script` tool
+   * that runs several request notes.
+   */
+  pairs?: string[];
 }
 
 export interface McpPackageManifest {
@@ -143,13 +148,16 @@ export type McpDownloadSelection = "all" | { toolPath: string };
 
 /**
  * Which files to fetch and write for a download: everything, or one tool with its index
- * (so its "up" link resolves) and its paired request note, if it has one.
+ * (so its "up" link resolves) and the request notes it needs (`pair` plus any `pairs`).
+ * Paths not in the manifest (e.g. a request from another package) are left out.
  */
 export function filesToInstall(manifest: McpPackageManifest, selection: McpDownloadSelection): McpPackageFile[] {
   if (selection === "all") return manifest.files;
   const tool = manifest.files.find((f) => f.kind === "tool" && f.path === selection.toolPath);
   if (!tool) return [];
   const index = manifest.files.find((f) => f.kind === "index");
-  const pair = tool.pair ? manifest.files.find((f) => f.path === tool.pair) : undefined;
-  return [index, tool, pair].filter((f): f is McpPackageFile => f !== undefined);
+  const requestPaths = [tool.pair, ...(Array.isArray(tool.pairs) ? tool.pairs : [])];
+  const requests = requestPaths.map((path) => (path ? manifest.files.find((f) => f.path === path) : undefined));
+  const files = [index, tool, ...requests].filter((f): f is McpPackageFile => f !== undefined);
+  return [...new Set(files)];
 }
