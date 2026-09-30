@@ -68,6 +68,68 @@ describe("mcpCatalog", () => {
     it("returns nothing for a tool path that does not exist", () => {
       expect(filesToInstall(MANIFEST, { toolPath: "Tools/missing.md" })).toEqual([]);
     });
+
+    describe("with several request notes (pairs)", () => {
+      const SCRIPT_MANIFEST: McpPackageManifest = {
+        id: "automation",
+        name: "Automation MCP",
+        tag: "api/app/automation",
+        logo: "automation",
+        index: "MCP - Automation.md",
+        files: [
+          { path: "MCP - Automation.md", kind: "index" },
+          {
+            path: "Tools/automation_search_rule_config.md",
+            kind: "tool",
+            name: "automation_search_rule_config",
+            pair: "Requests/Automation - Get a rule by UUID.md",
+            pairs: ["Requests/Automation - List rule summaries.md"],
+          },
+          {
+            path: "Tools/automation_find_rules.md",
+            kind: "tool",
+            name: "automation_find_rules",
+            pairs: ["Requests/Automation - List rule summaries.md", "Requests/Jira v3 - Get project.md"],
+          },
+          {
+            path: "Tools/automation_overlapping.md",
+            kind: "tool",
+            name: "automation_overlapping",
+            pair: "Requests/Automation - Get a rule by UUID.md",
+            pairs: ["Requests/Automation - Get a rule by UUID.md", "Requests/Automation - List rule summaries.md", "Requests/Automation - List rule summaries.md"],
+          },
+          { path: "Requests/Automation - Get a rule by UUID.md", kind: "request" },
+          { path: "Requests/Automation - List rule summaries.md", kind: "request" },
+        ],
+      };
+      const paths = (toolPath: string) => filesToInstall(SCRIPT_MANIFEST, { toolPath }).map((f) => f.path);
+
+      it("installs pair and every path in pairs", () => {
+        expect(paths("Tools/automation_search_rule_config.md")).toEqual([
+          "MCP - Automation.md",
+          "Tools/automation_search_rule_config.md",
+          "Requests/Automation - Get a rule by UUID.md",
+          "Requests/Automation - List rule summaries.md",
+        ]);
+      });
+
+      it("works with pairs alone and skips paths that are not in the manifest", () => {
+        expect(paths("Tools/automation_find_rules.md")).toEqual([
+          "MCP - Automation.md",
+          "Tools/automation_find_rules.md",
+          "Requests/Automation - List rule summaries.md",
+        ]);
+      });
+
+      it("installs each request once when pair and pairs overlap", () => {
+        expect(paths("Tools/automation_overlapping.md")).toEqual([
+          "MCP - Automation.md",
+          "Tools/automation_overlapping.md",
+          "Requests/Automation - Get a rule by UUID.md",
+          "Requests/Automation - List rule summaries.md",
+        ]);
+      });
+    });
   });
 
   describe("needsServiceTemplate", () => {
