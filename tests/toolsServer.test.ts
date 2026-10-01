@@ -7,7 +7,7 @@ import { utf8ToBase64 } from "../src/engine/placeholders";
 import { nodeTransport } from "../src/engine/transport";
 import { contextOf, createClient, findClient } from "../src/server/clients";
 import { LocalServer } from "../src/server/localServer";
-import { buildGuide, GuideMode } from "../src/tools/guide";
+import { buildGuide } from "../src/tools/guide";
 import { ToolRegistry } from "../src/tools/registry";
 import { ScriptRunner } from "../src/tools/scriptRunner";
 import { ToolsService, ToolsSettings } from "../src/tools/service";
@@ -64,7 +64,7 @@ beforeAll(async () => {
 
   const broker = new Broker(store, nodeTransport, async () => true, audit, () => ({ timeoutMs: 5000, maxResponseBytes: 1_000_000, maxRedirects: 5 }));
   registry = new ToolRegistry(source, () => ({ enabled: settings.toolsEnabled, toolTag: settings.toolTag, scriptsEnabled: settings.scriptsEnabled }));
-  const guideText = (request?: string, mode?: GuideMode) => buildGuide("en", request, mode);
+  const guideText = (request?: string) => buildGuide("en", request);
   const tools = new ToolsService({
     registry,
     source,
@@ -72,7 +72,7 @@ beforeAll(async () => {
     runner: new ScriptRunner(),
     audit,
     settings: () => settings,
-    guide: (mode) => guideText(undefined, mode),
+    guide: () => guideText(),
   });
   await registry.refresh();
 
@@ -165,16 +165,12 @@ describe("vault tools over MCP", () => {
     const tool = await call("get_tool_authoring_guide", {});
     expect(tool.result.content[0].text).toContain("Implementation Plan");
     const prompts = await rpc("prompts/list");
-    expect(prompts.result.prompts.map((p: { name: string }) => p.name)).toEqual(["configure_vault_tools", "add_vault_tool", "add_vault_tools"]);
+    expect(prompts.result.prompts.map((p: { name: string }) => p.name)).toEqual(["configure_vault_tools"]);
     const prompt = await rpc("prompts/get", { name: "configure_vault_tools", arguments: { request: "Google Drive tools" } });
     expect(prompt.result.messages[0].content.text).toContain("Google Drive tools");
     expect(prompt.result.messages[0].content.text).toMatch(/^# Set up the MCP environment/);
-    const single = await rpc("prompts/get", { name: "add_vault_tool", arguments: { request: "get an item" } });
-    expect(single.result.messages[0].content.text).toMatch(/^# Add one tool/);
-    const multiple = await call("get_tool_authoring_guide", { mode: "multiple" });
-    expect(multiple.result.content[0].text).toMatch(/^# Add several tools/);
-    const singleRest = await fetch(`${base}/v1/tools/guide?mode=single`, { headers: auth() });
-    expect(await singleRest.text()).toMatch(/^# Add one tool/);
+    const removed = await rpc("prompts/get", { name: "add_vault_tool", arguments: { request: "get an item" } });
+    expect(removed.error?.message).toMatch(/Unknown prompt/);
     const rest = await fetch(`${base}/v1/tools/guide`, { headers: auth() });
     expect(await rest.text()).toContain("ask the user before writing the plan");
   });
