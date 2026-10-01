@@ -279,10 +279,13 @@ export class EnvironmentVariablesView extends ItemView {
 
   /** Short instructions for each feature of the plugin, in the panel's language. */
   private renderHowTo(body: HTMLElement): void {
+    // Tags are shown exactly as the plugin reads them (never translated), from the current settings.
+    const settings = this.plugin.data.settings;
+    const tags = { toolTag: settings.toolTag, requestTag: settings.requestTag };
     for (const [title, desc] of HOW_TO) {
       const item = body.createDiv({ cls: "ev-howto" });
       item.createDiv({ text: t(title), cls: "ev-howto-title" });
-      item.createDiv({ text: t(desc), cls: "ev-muted" });
+      item.createDiv({ text: t(desc, tags), cls: "ev-muted" });
     }
     subHeading(body, t("view.howto.templates"));
     body.createDiv({ text: t("view.howto.templatesDesc"), cls: "ev-muted ev-howto" });

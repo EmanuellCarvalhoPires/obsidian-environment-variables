@@ -40,3 +40,19 @@ describe("language", () => {
     expect(t("view.log.show", { n: 3 })).toBe("Log entries (3)");
   });
 });
+
+describe("How to use", () => {
+  it("shows the real tags, never translated", () => {
+    for (const lang of ["en", "pt-BR"] as const) {
+      setLanguage(lang);
+      const tags = { toolTag: "mcp/tool", requestTag: "api/request" };
+      expect(t("view.howto.toolsDesc", tags)).toContain("#mcp/tool");
+      expect(t("view.howto.toolsDesc", tags)).toContain("#api/request");
+      expect(t("view.howto.groupsDesc", tags)).toContain("#mcp/tool/jira");
+      expect(t("view.howto.templatesDesc")).toContain("#template");
+    }
+    setLanguage("pt-BR");
+    expect(t("view.howto.toolsDesc", { toolTag: "x", requestTag: "y" })).not.toContain("tag de ferramenta");
+    setLanguage("en");
+  });
+});
