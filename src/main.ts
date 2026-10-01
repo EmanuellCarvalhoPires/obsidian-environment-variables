@@ -14,6 +14,7 @@ import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIde
 import { LanguageSetting, NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
 import { buildGuide } from "./tools/guide";
+import { serviceTemplateFor, templatesToCreate, templateText } from "./tools/serviceTemplates";
 import {
   appForEntry,
   fetchCatalog,
@@ -205,6 +206,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       if (this.data.settings.serverEnabled) void this.startServer();
       this.scheduleToolScan();
+      void this.createServiceTemplates();
     });
   }
 
@@ -697,6 +699,35 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   /**
+   * Creates the bundled instance templates the vault does not have yet, once each, in the
+   * "Instances" folder next to the hub note. A template the user deleted is not created again.
+   */
+  private async createServiceTemplates(): Promise<void> {
+    const pending = templatesToCreate(this.data.createdTemplates, (tag) => this.toolSource.byTag(tag));
+    if (pending.length === 0) return;
+    try {
+      const folder = await this.instancesFolder();
+      const lang = currentLanguage() === "pt-BR" ? "pt" : "en";
+      for (const template of pending) {
+        const target = normalizePath(`${folder}/${template.fileName}`);
+        if (!this.app.vault.getAbstractFileByPath(target)) await this.app.vault.create(target, templateText(template, lang));
+        this.data.createdTemplates.push(template.id);
+      }
+      await this.saveAll();
+    } catch (err) {
+      console.error("Environment Keys: could not create the instance templates", err);
+    }
+  }
+
+  /** The "Instances" folder next to the hub note, created if missing. */
+  private async instancesFolder(): Promise<string> {
+    const hubFolder = await this.ensureMcpHubNote();
+    const folder = normalizePath(hubFolder ? `${hubFolder}/Instances` : "Instances");
+    if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+    return folder;
+  }
+
+  /**
    * The first time a package needs a service (serviceTag) the vault has no instance of yet,
    * downloads that service's template note into an "Instances" folder next to the hub note.
    */
@@ -705,10 +736,13 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     if (!needsServiceTemplate(entry, this.toolSource.byTag(entry.serviceTag))) return false;
     const folder = normalizePath(hubFolder ? `${hubFolder}/Instances` : "Instances");
     if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
-    const target = normalizePath(`${folder}/${serviceTemplateFileName(entry.serviceTag)}`);
+    // The bundled template, in the panel's language, wins over the catalog's copy.
+    const bundled = serviceTemplateFor(entry.serviceTag);
+    const target = normalizePath(`${folder}/${bundled?.fileName ?? serviceTemplateFileName(entry.serviceTag)}`);
     if (this.app.vault.getAbstractFileByPath(target)) return false;
-    const content = await reader.fetchText(entry.serviceTemplate);
+    const content = bundled ? templateText(bundled, currentLanguage() === "pt-BR" ? "pt" : "en") : await reader.fetchText(entry.serviceTemplate);
     await this.app.vault.create(target, content);
+    if (bundled && !this.data.createdTemplates.includes(bundled.id)) this.data.createdTemplates.push(bundled.id);
     return true;
   }
 
