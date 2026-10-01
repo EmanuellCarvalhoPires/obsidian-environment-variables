@@ -135,6 +135,8 @@ export function serviceTemplateFileName(serviceTag: string): string {
  */
 const SERVICE_APPS: Record<string, { name: string; logo: string }> = {
   atlassian: { name: "Atlassian", logo: "atlassian" },
+  // Bitbucket has its own service (bitbucket/workspace) but is an Atlassian app too.
+  bitbucket: { name: "Atlassian", logo: "atlassian" },
 };
 
 /** The two-level app (name + default logo id) a package should be grouped under, if any. */
