@@ -13,7 +13,8 @@ import { LocalServer, PortInUseError, PortOwner, probePort } from "./server/loca
 import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIdentity";
 import { LanguageSetting, NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
-import { buildGuide, GuideMode } from "./tools/guide";
+import { buildGuide } from "./tools/guide";
+import { serviceTemplateFor, templatesToCreate, templateText } from "./tools/serviceTemplates";
 import {
   appForEntry,
   fetchCatalog,
@@ -121,7 +122,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       runner: new ScriptRunner(),
       audit: this.audit,
       settings: () => ({ ...s() }),
-      guide: (mode) => this.agentGuide(undefined, mode),
+      guide: () => this.agentGuide(),
     });
     // Only tool notes and instance notes are read again; the registry ignores every other note.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteEvent(() => this.registry.noteChanged(file.path))));
@@ -168,9 +169,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       },
     });
 
-    this.addCommand({ id: "copy-agent-guide", name: t("cmd.copyGuide"), callback: () => this.copyAgentGuide("setup") });
-    this.addCommand({ id: "copy-agent-guide-single", name: t("cmd.copyGuideSingle"), callback: () => this.copyAgentGuide("single") });
-    this.addCommand({ id: "copy-agent-guide-multiple", name: t("cmd.copyGuideMultiple"), callback: () => this.copyAgentGuide("multiple") });
+    this.addCommand({ id: "copy-agent-guide", name: t("cmd.copyGuide"), callback: () => this.copyAgentGuide() });
 
     this.addSettingTab(new EnvironmentVariablesSettingTab(this.app, this));
     this.registerEditorSuggest(new SecretNameSuggest(this));
@@ -207,6 +206,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       if (this.data.settings.serverEnabled) void this.startServer();
       this.scheduleToolScan();
+      void this.createServiceTemplates();
     });
   }
 
@@ -380,7 +380,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       broker: this.broker,
       version: this.manifest.version,
       tools: this.tools,
-      guide: (request, mode) => this.agentGuide(request, mode),
+      guide: (request) => this.agentGuide(request),
       vault: { id: this.vaultId, name: this.vaultName },
       authenticate: async (token) => {
         const client = await findClient(this.data.clients, token);
@@ -699,6 +699,35 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   /**
+   * Creates the bundled instance templates the vault does not have yet, once each, in the
+   * "Instances" folder next to the hub note. A template the user deleted is not created again.
+   */
+  private async createServiceTemplates(): Promise<void> {
+    const pending = templatesToCreate(this.data.createdTemplates, (tag) => this.toolSource.byTag(tag));
+    if (pending.length === 0) return;
+    try {
+      const folder = await this.instancesFolder();
+      const lang = currentLanguage() === "pt-BR" ? "pt" : "en";
+      for (const template of pending) {
+        const target = normalizePath(`${folder}/${template.fileName}`);
+        if (!this.app.vault.getAbstractFileByPath(target)) await this.app.vault.create(target, templateText(template, lang));
+        this.data.createdTemplates.push(template.id);
+      }
+      await this.saveAll();
+    } catch (err) {
+      console.error("Environment Keys: could not create the instance templates", err);
+    }
+  }
+
+  /** The "Instances" folder next to the hub note, created if missing. */
+  private async instancesFolder(): Promise<string> {
+    const hubFolder = await this.ensureMcpHubNote();
+    const folder = normalizePath(hubFolder ? `${hubFolder}/Instances` : "Instances");
+    if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+    return folder;
+  }
+
+  /**
    * The first time a package needs a service (serviceTag) the vault has no instance of yet,
    * downloads that service's template note into an "Instances" folder next to the hub note.
    */
@@ -707,10 +736,13 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     if (!needsServiceTemplate(entry, this.toolSource.byTag(entry.serviceTag))) return false;
     const folder = normalizePath(hubFolder ? `${hubFolder}/Instances` : "Instances");
     if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
-    const target = normalizePath(`${folder}/${serviceTemplateFileName(entry.serviceTag)}`);
+    // The bundled template, in the panel's language, wins over the catalog's copy.
+    const bundled = serviceTemplateFor(entry.serviceTag);
+    const target = normalizePath(`${folder}/${bundled?.fileName ?? serviceTemplateFileName(entry.serviceTag)}`);
     if (this.app.vault.getAbstractFileByPath(target)) return false;
-    const content = await reader.fetchText(entry.serviceTemplate);
+    const content = bundled ? templateText(bundled, currentLanguage() === "pt-BR" ? "pt" : "en") : await reader.fetchText(entry.serviceTemplate);
     await this.app.vault.create(target, content);
+    if (bundled && !this.data.createdTemplates.includes(bundled.id)) this.data.createdTemplates.push(bundled.id);
     return true;
   }
 
@@ -749,12 +781,12 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   /** The prompt for AI agents, in the language of Obsidian. Generic: it names nothing of this vault. */
-  agentGuide(request?: string, mode: GuideMode = "setup"): string {
-    return buildGuide(currentLanguage() === "pt-BR" ? "pt" : "en", request, mode);
+  agentGuide(request?: string): string {
+    return buildGuide(currentLanguage() === "pt-BR" ? "pt" : "en", request);
   }
 
-  copyAgentGuide(mode: GuideMode = "setup"): void {
-    void navigator.clipboard.writeText(this.agentGuide(undefined, mode));
+  copyAgentGuide(): void {
+    void navigator.clipboard.writeText(this.agentGuide());
     new Notice(t("notice.guideCopied"), 8_000);
   }
 
