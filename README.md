@@ -133,6 +133,10 @@ params:
 
 The plugin adds the `instance` parameter by itself, with the instances it finds ("Jira - ACME" and "Jira - Globex" become `ACME` and `Globex`), so a new instance only needs a new service note: `jira_get_issue({ instance: "ACME", key: "ACME-123" })`.
 
+### Instance templates
+
+When the plugin is installed, it creates one instance (service note) template for each service the catalog's packages use: **Atlassian Access - Template** (`atlassian/instance`: Jira, JSM, Confluence, Automation, Assets), **Bitbucket Access - Template** (`bitbucket/workspace`) and **Trello Access - Template** (`trello/account`), in an `Instances` folder next to the `MCP Tools` note and in the plugin's language. Each one is created once: a template you delete is not created again. Duplicate a template, name the copy after your instance, remove the `template` tag and fill in its properties; each template, and **How to use → How to fill in each template** in the panel, explains every property.
+
 ### Let an AI agent build the tools
 
 You do not need to write these notes yourself. Ask your AI agent, for example *"create tools to list and search files in Google Drive"*:

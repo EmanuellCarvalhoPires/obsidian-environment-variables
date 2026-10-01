@@ -284,6 +284,13 @@ export class EnvironmentVariablesView extends ItemView {
       item.createDiv({ text: t(title), cls: "ev-howto-title" });
       item.createDiv({ text: t(desc), cls: "ev-muted" });
     }
+    subHeading(body, t("view.howto.templates"));
+    body.createDiv({ text: t("view.howto.templatesDesc"), cls: "ev-muted ev-howto" });
+    for (const [title, desc] of HOW_TO_TEMPLATES) {
+      const item = body.createDiv({ cls: "ev-howto" });
+      item.createDiv({ text: t(title), cls: "ev-howto-title" });
+      item.createDiv({ text: t(desc), cls: "ev-muted" });
+    }
   }
 
   private renderTools(body: HTMLElement): void {
@@ -700,6 +707,13 @@ const HOW_TO = [
   ["view.howto.download", "view.howto.downloadDesc"],
   ["view.howto.logs", "view.howto.logsDesc"],
   ["view.howto.settings", "view.howto.settingsDesc"],
+] as const;
+
+/** The bundled instance templates, in How to use → How to fill in each template. */
+const HOW_TO_TEMPLATES = [
+  ["view.howto.tplAtlassian", "view.howto.tplAtlassianDesc"],
+  ["view.howto.tplBitbucket", "view.howto.tplBitbucketDesc"],
+  ["view.howto.tplTrello", "view.howto.tplTrelloDesc"],
 ] as const;
 
 function collapsible(parent: HTMLElement, title: string, open: boolean, onToggle: (open: boolean) => void): HTMLElement {
