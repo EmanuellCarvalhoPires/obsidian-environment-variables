@@ -13,7 +13,7 @@ import { LocalServer, PortInUseError, PortOwner, probePort } from "./server/loca
 import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIdentity";
 import { LanguageSetting, NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
-import { buildGuide, GuideMode } from "./tools/guide";
+import { buildGuide } from "./tools/guide";
 import {
   appForEntry,
   fetchCatalog,
@@ -121,7 +121,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       runner: new ScriptRunner(),
       audit: this.audit,
       settings: () => ({ ...s() }),
-      guide: (mode) => this.agentGuide(undefined, mode),
+      guide: () => this.agentGuide(),
     });
     // Only tool notes and instance notes are read again; the registry ignores every other note.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteEvent(() => this.registry.noteChanged(file.path))));
@@ -168,9 +168,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       },
     });
 
-    this.addCommand({ id: "copy-agent-guide", name: t("cmd.copyGuide"), callback: () => this.copyAgentGuide("setup") });
-    this.addCommand({ id: "copy-agent-guide-single", name: t("cmd.copyGuideSingle"), callback: () => this.copyAgentGuide("single") });
-    this.addCommand({ id: "copy-agent-guide-multiple", name: t("cmd.copyGuideMultiple"), callback: () => this.copyAgentGuide("multiple") });
+    this.addCommand({ id: "copy-agent-guide", name: t("cmd.copyGuide"), callback: () => this.copyAgentGuide() });
 
     this.addSettingTab(new EnvironmentVariablesSettingTab(this.app, this));
     this.registerEditorSuggest(new SecretNameSuggest(this));
@@ -380,7 +378,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       broker: this.broker,
       version: this.manifest.version,
       tools: this.tools,
-      guide: (request, mode) => this.agentGuide(request, mode),
+      guide: (request) => this.agentGuide(request),
       vault: { id: this.vaultId, name: this.vaultName },
       authenticate: async (token) => {
         const client = await findClient(this.data.clients, token);
@@ -749,12 +747,12 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   /** The prompt for AI agents, in the language of Obsidian. Generic: it names nothing of this vault. */
-  agentGuide(request?: string, mode: GuideMode = "setup"): string {
-    return buildGuide(currentLanguage() === "pt-BR" ? "pt" : "en", request, mode);
+  agentGuide(request?: string): string {
+    return buildGuide(currentLanguage() === "pt-BR" ? "pt" : "en", request);
   }
 
-  copyAgentGuide(mode: GuideMode = "setup"): void {
-    void navigator.clipboard.writeText(this.agentGuide(undefined, mode));
+  copyAgentGuide(): void {
+    void navigator.clipboard.writeText(this.agentGuide());
     new Notice(t("notice.guideCopied"), 8_000);
   }
 

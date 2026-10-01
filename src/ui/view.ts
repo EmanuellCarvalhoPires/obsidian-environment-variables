@@ -8,7 +8,6 @@ import { SecretRecord } from "../store/types";
 import { wildcardRisk } from "../engine/hosts";
 import { accessOf, ClientAccess, ClientRecord } from "../server/clients";
 import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal } from "./modals";
-import { GUIDE_MODES, GuideMode } from "../tools/guide";
 import { McpAppConfig, McpGroupConfig, McpGroupStats, newMcpApp, newMcpGroup } from "../tools/mcpGroups";
 import { ToolEntry } from "../tools/types";
 import { iconLine } from "./dom";
@@ -29,8 +28,9 @@ export class EnvironmentVariablesView extends ItemView {
   private error = "";
   private clientsOpen: boolean | undefined;
   private toolsOpen: boolean | undefined;
+  private howToOpen = false;
   private logOpen = false;
-  private guideVisible: GuideMode | null = null;
+  private guideVisible = false;
   private connecting: IntegrationId | null = null;
   private detected = new Map<IntegrationId, boolean>();
 
@@ -273,6 +273,17 @@ export class EnvironmentVariablesView extends ItemView {
     const entries = this.plugin.registry.list();
     const toolsOpen = this.toolsOpen ?? (settings.toolsEnabled && entries.some((e) => e.status !== "ready"));
     this.renderTools(collapsible(section, t("view.tools.title"), toolsOpen, (open) => (this.toolsOpen = open)));
+
+    this.renderHowTo(collapsible(section, t("view.howto.title"), this.howToOpen, (open) => (this.howToOpen = open)));
+  }
+
+  /** Short instructions for each feature of the plugin, in the panel's language. */
+  private renderHowTo(body: HTMLElement): void {
+    for (const [title, desc] of HOW_TO) {
+      const item = body.createDiv({ cls: "ev-howto" });
+      item.createDiv({ text: t(title), cls: "ev-howto-title" });
+      item.createDiv({ text: t(desc), cls: "ev-muted" });
+    }
   }
 
   private renderTools(body: HTMLElement): void {
@@ -296,9 +307,9 @@ export class EnvironmentVariablesView extends ItemView {
       return;
     }
 
-    // The prompts for AI agents: how the tools work and the mandatory plan-first workflow, one per task.
+    // The prompt for AI agents: how the tools work and the mandatory plan-first workflow.
     subHeading(body, t("view.tools.guideTitle"), { info: t("view.tools.guideBody") });
-    for (const mode of GUIDE_MODES) this.renderPrompt(body, mode);
+    this.renderPrompt(body);
 
     subHeading(body, t("view.tools.listTitle"), { count: entries.length });
     if (entries.length === 0) {
@@ -308,23 +319,23 @@ export class EnvironmentVariablesView extends ItemView {
     for (const entry of entries) this.renderTool(body, entry);
   }
 
-  private renderPrompt(body: HTMLElement, mode: GuideMode): void {
-    const shown = this.guideVisible === mode;
+  private renderPrompt(body: HTMLElement): void {
+    const shown = this.guideVisible;
     const row = new Setting(body)
-      .setName(t(`view.tools.prompt.${mode}`))
+      .setName(t("view.tools.prompt.setup"))
       .setClass("ev-row")
       .addExtraButton((b) =>
         b
           .setIcon(shown ? "eye-off" : "eye")
           .setTooltip(shown ? t("view.tools.hideGuide") : t("view.tools.showGuide"))
           .onClick(() => {
-            this.guideVisible = shown ? null : mode;
+            this.guideVisible = !shown;
             this.render();
           }),
       )
-      .addButton((b) => b.setButtonText(t("view.tools.copy")).setCta().onClick(() => this.plugin.copyAgentGuide(mode)));
-    setTooltip(row.nameEl, t(`view.tools.prompt.${mode}Desc`));
-    if (shown) body.createEl("pre", { text: this.plugin.agentGuide(undefined, mode), cls: "ev-tool-guide" });
+      .addButton((b) => b.setButtonText(t("view.tools.copy")).setCta().onClick(() => this.plugin.copyAgentGuide()));
+    setTooltip(row.nameEl, t("view.tools.prompt.setupDesc"));
+    if (shown) body.createEl("pre", { text: this.plugin.agentGuide(), cls: "ev-tool-guide" });
   }
 
   private renderTool(body: HTMLElement, entry: ToolEntry): void {
@@ -676,6 +687,21 @@ function subHeading(parent: HTMLElement, title: string, opts: { count?: number; 
 }
 
 /** A group that opens and closes, with a chevron like Obsidian's collapsible lists. Returns its body. */
+/** The features listed in How to use, in the order of the panel. */
+const HOW_TO = [
+  ["view.howto.vault", "view.howto.vaultDesc"],
+  ["view.howto.variables", "view.howto.variablesDesc"],
+  ["view.howto.references", "view.howto.referencesDesc"],
+  ["view.howto.hosts", "view.howto.hostsDesc"],
+  ["view.howto.clients", "view.howto.clientsDesc"],
+  ["view.howto.tools", "view.howto.toolsDesc"],
+  ["view.howto.prompt", "view.howto.promptDesc"],
+  ["view.howto.groups", "view.howto.groupsDesc"],
+  ["view.howto.download", "view.howto.downloadDesc"],
+  ["view.howto.logs", "view.howto.logsDesc"],
+  ["view.howto.settings", "view.howto.settingsDesc"],
+] as const;
+
 function collapsible(parent: HTMLElement, title: string, open: boolean, onToggle: (open: boolean) => void): HTMLElement {
   const details = parent.createEl("details", { cls: "ev-group" });
   details.open = open;

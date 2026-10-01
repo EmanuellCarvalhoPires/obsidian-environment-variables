@@ -3,7 +3,6 @@
 // Implemented by hand: two built-in tools, plus the vault tools when that feature is on.
 
 import { Broker } from "../engine/broker";
-import { GuideMode } from "../tools/guide";
 import type { ToolsService } from "../tools/service";
 import { ClientContext } from "./clients";
 
@@ -28,28 +27,13 @@ const TOOLS_INSTRUCTIONS = [
 
 export const CONFIGURE_PROMPT = "configure_vault_tools";
 
-/** The MCP prompts, one per guide mode. configure_vault_tools keeps its name: it sets up the MCP environment. */
-const PROMPTS: Array<{ name: string; mode: GuideMode; title: string; description: string; example: string }> = [
+/** The MCP prompt. It keeps the name configure_vault_tools: it sets up the MCP environment. */
+const PROMPTS: Array<{ name: string; title: string; description: string; example: string }> = [
   {
     name: CONFIGURE_PROMPT,
-    mode: "setup",
     title: "Set up the MCP environment",
-    description: "Set up the vault's MCP environment for an app or API: service notes for each instance, secrets and the tools. Loads the plugin's guide for AI agents.",
+    description: "Set up the vault's MCP environment for an app or API, or add tools to one already set up: catalog packages, service notes for each instance, secrets, tools and MCP groups. Loads the plugin's guide for AI agents.",
     example: "set up Google Drive: list and search files",
-  },
-  {
-    name: "add_vault_tool",
-    mode: "single",
-    title: "Add one tool",
-    description: "Add a single MCP tool defined by a note, reusing the service notes and secrets the vault already has. Short plan, then approval.",
-    example: "a tool to get a Jira issue by key",
-  },
-  {
-    name: "add_vault_tools",
-    mode: "multiple",
-    title: "Add several tools",
-    description: "Add several MCP tools defined by notes, sharing service and request notes. Full implementation plan, then approval.",
-    example: "tools to list, get and comment on Jira issues",
   },
 ];
 
@@ -100,8 +84,8 @@ export interface McpContext {
   client: ClientContext;
   version: string;
   tools?: ToolsService;
-  /** The authoring guide for the chosen prompt with the user's request appended, for prompts/get. */
-  guide?: (request?: string, mode?: GuideMode) => string;
+  /** The authoring guide with the user's request appended, for prompts/get. */
+  guide?: (request?: string) => string;
 }
 
 export async function handleMcpMessage(message: unknown, ctx: McpContext): Promise<JsonRpcResponse | null> {
@@ -153,7 +137,7 @@ export async function handleMcpMessage(message: unknown, ctx: McpContext): Promi
         id,
         result: {
           description: prompt.description,
-          messages: [{ role: "user", content: { type: "text", text: ctx.guide(request, prompt.mode) } }],
+          messages: [{ role: "user", content: { type: "text", text: ctx.guide(request) } }],
         },
       };
     }

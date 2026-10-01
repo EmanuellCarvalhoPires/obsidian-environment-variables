@@ -1,6 +1,8 @@
 # Setar o ambiente MCP do plugin Environment Keys
 
-Você vai configurar, do zero, o ambiente MCP do plugin **Environment Keys** do Obsidian no computador deste usuário. O objetivo é deixar tudo pronto para ele usar as funcionalidades do plugin: o cliente de IA conectado ao servidor do cofre, as variáveis de ambiente (segredos) necessárias, as notas de serviço, de requisição e de ferramenta de um app ou serviço, e as ferramentas MCP validadas.
+Você vai configurar o ambiente MCP do plugin **Environment Keys** do Obsidian no computador deste usuário. O objetivo é deixar tudo pronto para ele usar as funcionalidades do plugin: o cliente de IA conectado ao servidor do cofre, as variáveis de ambiente (segredos) necessárias, as notas de serviço, de requisição e de ferramenta de um app ou serviço (baixadas do catálogo ou criadas por você), os grupos de MCP no painel, as ferramentas MCP validadas e as regras do plugin registradas no `CLAUDE.md` do cofre (com a permissão do usuário).
+
+O mesmo prompt vale do zero ou para completar um ambiente que já existe (ex.: só adicionar uma ou várias ferramentas a um app já configurado). Nesse caso, confirme as etapas que já estão prontas, sem refazê-las, e reaproveite as notas de serviço, as variáveis e as requisições que o cofre já tem, copiando o padrão das ferramentas do mesmo app (prefixo do nome, `service_tag`, `service_param`, tags e `up:`).
 
 ## Etapas do ambiente
 
@@ -9,20 +11,41 @@ Siga nesta ordem. As ações marcadas como **usuário** são feitas por ele no O
 1. **Plugin instalado e ativo (usuário).** Obsidian → Configurações → Plugins da comunidade → Environment Keys ligado. O cofre de segredos precisa estar criado e desbloqueado (painel Environment Keys, ícone de chave na barra lateral).
 2. **Cliente de IA conectado (usuário).** No painel do plugin → Clientes de IA → **Conectar** no seu cliente (Claude Code, Codex, Cursor...). Isso liga o servidor local e registra o servidor MCP no cliente, sem token para copiar. Depois o cliente precisa ser recarregado. Se o cliente não estiver na lista, use "Outro cliente (configuração manual)".
 3. **Servidor certo.** Encontre o servidor MCP do plugin nas suas ferramentas (regra 2 do guia). Se houver mais de um, pergunte qual é o cofre. Chame `list_secrets` e, se existir, `list_vault_tools`.
-4. **Ferramentas do cofre ligadas (usuário).** Se `list_vault_tools` não existir, ou informar `enabled: false`, peça para ligar em Configurações → Environment Keys → Ferramentas do cofre. Ferramentas com script só são necessárias se o plano usar `kind: script`.
+4. **Ferramentas do cofre ligadas (usuário).** Se `list_vault_tools` não existir, ou informar `enabled: false`, peça para ligar em Configurações → Environment Keys → Ferramentas do cofre. Ferramentas com script só são necessárias se o plano usar `kind: script` (os pacotes do catálogo podem ter algumas: veja o `kind` delas em `list_vault_tools` depois de baixar).
 5. **Convenções do cofre.** Leia os arquivos de instruções (`CLAUDE.md`, `AGENTS.md`), as notas índice (MOCs), a taxonomia de tags e propriedades como `up:`, e siga essas convenções nas notas que criar.
 6. **Pergunta obrigatória.** Faça a pergunta do final deste prompt e espere a resposta.
-7. **Plano de Implementação** no modelo da seção 8 do guia, incluindo: cada variável de ambiente que o usuário vai cadastrar (nome, tipo e hosts permitidos), as notas de serviço (uma por instância), as notas de requisição, as notas de ferramenta e onde elas entram no cofre (nota índice, `up:`, tags). Espere a aprovação explícita.
-8. **Variáveis de ambiente (usuário).** Depois da aprovação, o usuário cadastra cada variável no painel do plugin (ícone de chave → Nova variável), com o nome, o tipo e os hosts permitidos do plano. Tipos: token, usuário + token (Basic), token Bearer, valor de header customizado ou variável de ambiente. Você nunca vê, pede ou escreve o valor: confirme só pelo `list_secrets`.
-9. **Notas e validação:** siga a seção 9 do guia.
+7. **Catálogo de MCPs prontos (usuário).** Antes de planejar notas à mão, peça ao usuário para abrir o painel do plugin → Grupos de MCP → **Baixar MCP** e dizer se o app pedido está no catálogo e quais ferramentas o pacote tem (botão "Mostrar ferramentas"). Se estiver:
+   - o usuário baixa o pacote inteiro (**Baixar tudo**) ou só as ferramentas pedidas (**Baixar** em cada uma). O plugin copia as notas de ferramenta e todas as requisições de que elas dependem, cria a nota índice dos pacotes e o grupo do MCP no painel, e agrupa sozinho os pacotes de um mesmo app (ex.: Atlassian). Notas que já existem não são sobrescritas;
+   - se o cofre ainda não tiver nenhuma instância do serviço do pacote, o plugin cria um **molde de instância** numa pasta "Instances". Esse molde é a nota de serviço: a partir dele, monte uma nota de serviço por instância, com a URL e o placeholder da variável que o usuário vai cadastrar. Não edite as notas de ferramenta e de requisição baixadas; para mudar uma, proponha no plano;
+   - chame `list_vault_tools` para conferir o que foi instalado. O plano passa a cobrir só o que faltar: notas de serviço, variáveis de ambiente e ferramentas que o pacote não tem.
+
+   Se o app não estiver no catálogo, ou o usuário preferir não usar, siga criando as notas à mão.
+8. **Plano de Implementação** no modelo da seção 8 do guia, incluindo: o que veio do catálogo (pacote e ferramentas baixadas), cada variável de ambiente que o usuário vai cadastrar (nome, tipo e hosts permitidos), as notas de serviço (uma por instância), as notas de requisição, as notas de ferramenta, onde elas entram no cofre (nota índice, `up:`, tags) o grupo de MCP da etapa 11 e o resumo do que vai entrar no `CLAUDE.md` (etapa 12, que tem permissão própria). Para uma ferramenta só, as seções do plano podem ser curtas, mas todas aparecem. Espere a aprovação explícita.
+9. **Variáveis de ambiente (usuário).** Depois da aprovação, o usuário cadastra cada variável no painel do plugin (ícone de chave → Nova variável), com o nome, o tipo e os hosts permitidos do plano. Tipos: token, usuário + token (Basic), token Bearer, valor de header customizado ou variável de ambiente. Você nunca vê, pede ou escreve o valor: confirme só pelo `list_secrets`.
+   - Planeje sempre os hosts exatos da API. Não sugira **Permitir qualquer domínio** nem **Acesso total**: com Acesso total o valor vai para qualquer endereço HTTPS e o plugin nunca mais pede aprovação para ele.
+   - Se `list_secrets` mostrar uma variável com `allowAnyHost: true` ou `fullAccess: true`, aplique a regra 8 do guia a ela e sugira ao usuário trocar pelo host exato.
+10. **Notas e validação:** siga a seção 9 do guia.
+11. **Grupo de MCP (usuário).** Os pacotes baixados já aparecem em Grupos de MCP. Para ferramentas criadas à mão, peça ao usuário para criar o grupo no painel → Grupos de MCP → **Adicionar MCP**: nome, uma tag (as notas de ferramenta com essa tag e as subtags dela contam como membros, ex.: uma subtag por app da tag de ferramenta) ou os links das notas, e, se quiser, o app em que o MCP aparece (criado em **Adicionar app**, ex.: "Atlassian" para Jira e Confluence). Por isso, no plano, dê às notas de ferramenta de um app uma tag própria. Confira com o usuário se o grupo mostra o número certo de ferramentas e de requisições.
+12. **Regras do plugin no `CLAUDE.md` do cofre (só com permissão).** Para que as próximas conversas sigam as regras do plugin sem este prompt, proponha uma seção "Plugin Environment Keys" no arquivo de instruções do cofre: o `CLAUDE.md` na raiz do cofre, ou o `AGENTS.md` se o cofre usar só ele. Se nenhum existir, proponha criar o `CLAUDE.md` na raiz do cofre. A seção deve dizer:
+    - qual é o servidor MCP do plugin deste cofre (o nome que você encontrou na etapa 3) e que os outros servidores do plugin não devem ser usados aqui;
+    - que segredos só entram por placeholder (`{{secret:NOME}}`, `{{basic:NOME}}`, `{{bearer:NOME}}`), que o valor nunca é pedido, lido ou escrito, que as chaves e os hosts permitidos se consultam com `list_secrets` e que, com o cofre de segredos bloqueado, o usuário desbloqueia no painel Environment Keys;
+    - que, antes de usar `http_request`, o agente procura uma ferramenta do cofre para o endpoint (`list_vault_tools`) e a executa pelo nome ou pelo `run_vault_tool`;
+    - que ferramentas que gravam dados (`writes: true`) só rodam com autorização do usuário para aquela execução, e que variáveis com `allowAnyHost: true` ou `fullAccess: true` exigem mostrar o nome da variável e a URL de destino e esperar a autorização antes de cada execução;
+    - que, para criar ou mudar ferramentas, o agente chama `get_tool_authoring_guide` e segue o fluxo dele (levantamento, perguntas, Plano de Implementação e aprovação);
+    - as tags de ferramenta, de requisição e de serviço usadas no cofre, onde as notas entram (nota índice, `up:`) e que nada dentro de `.obsidian/` é editado.
+
+    Escreva a seção no idioma e no estilo do arquivo. Se ele já tiver uma seção sobre o plugin, proponha atualizá-la, sem duplicar, e não mexa no resto do arquivo.
+
+    **Peça permissão antes de criar ou alterar o arquivo.** Mostre ao usuário o caminho do arquivo e o texto completo que vai entrar (ou o trecho antigo e o novo, se for uma atualização) e pergunte, explicitamente, se pode gravar. Só grave depois de um "sim" claro para essa alteração: a aprovação do Plano de Implementação, ou de qualquer outra etapa, não vale como permissão para mexer no `CLAUDE.md`. Se o usuário pedir mudanças, mostre o texto de novo e peça a permissão de novo. Se ele recusar, não grave nada e entregue o texto para ele colar se quiser.
 
 %GUIDE%
 %REQUEST%
 ## Pergunta obrigatória antes de criar qualquer coisa
 
-Depois de levantar o estado atual (etapas 1 a 5, só leitura), pergunte ao usuário, exatamente com estas duas perguntas:
+Depois de levantar o estado atual (etapas 1 a 5, só leitura), pergunte ao usuário, exatamente com estas três perguntas:
 
-1. **Quais variáveis de ambiente (segredos) devem ser configuradas?** Por exemplo: um token de API, um usuário + token, um token Bearer.
+1. **Quais variáveis de ambiente (segredos) essas ferramentas vão usar?** Quem cria as variáveis é você, manualmente, no painel do plugin (ícone de chave → Nova variável), depois da aprovação do plano; eu nunca vejo nem escrevo os valores. Me diga o nome e o tipo de cada variável que você vai criar (ex.: um token de API, um usuário + token, um token Bearer) ou quais das que já existem serão reaproveitadas (mostre as que `list_secrets` listou para esse app).
 2. **Para qual app ou serviço elas são?** Por exemplo: Jira, GitHub, Google Drive, uma API interna. Se houver mais de uma conta ou instância, quais.
+3. **Quais ferramentas você quer?** A lista das ações que a IA vai poder fazer (ex.: "buscar um ticket pela chave"), marcando quais gravam dados, ou "o pacote inteiro do catálogo".
 
-Se o pedido do usuário já trouxer essas informações, confirme-as com ele. Se a resposta não trouxer as duas, ou vier incompleta, **pergunte de novo, explicitamente, o que faltou, e não siga com a criação**: não monte o plano, não crie nem altere nenhuma nota e não peça o cadastro de nenhuma variável até ter as duas respostas.
+Se o pedido do usuário já trouxer essas informações, confirme-as com ele. Se a resposta não trouxer as três, ou vier incompleta, **pergunte de novo, explicitamente, o que faltou, e não siga com a criação**: não monte o plano, não crie nem altere nenhuma nota e não peça o download de nenhum pacote nem o cadastro de nenhuma variável até ter as três respostas.
