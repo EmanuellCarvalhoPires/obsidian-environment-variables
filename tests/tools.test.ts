@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractCodeBlock, inputSchema, parseToolNote, validateArgs } from "../src/tools/definition";
-import { buildGuide, GuideMode } from "../src/tools/guide";
+import { buildGuide } from "../src/tools/guide";
 import { ToolRegistry } from "../src/tools/registry";
 import { parseRequestBlock, resolveRequest } from "../src/tools/requestNote";
 import { hasTag, linkTarget, ToolError, VaultNote } from "../src/tools/types";
@@ -258,17 +258,14 @@ describe("registry", () => {
 });
 
 describe("agent guide", () => {
-  const modes: GuideMode[] = ["setup", "single", "multiple"];
-
   it("keeps the mandatory workflow in every prompt and language", () => {
     for (const lang of ["pt", "en"] as const) {
-      for (const mode of modes) {
-        const text = buildGuide(lang, "tools for Google Drive", mode);
-        expect(text).not.toMatch(/%[A-Z_]+%/);
-        expect(text).toContain("tools for Google Drive");
-        expect(text).toContain("OAuth");
-        expect(text).toContain("service_tag");
-      }
+      const text = buildGuide(lang, "tools for Google Drive");
+      expect(text).not.toMatch(/%[A-Z_]+%/);
+      expect(text).toContain("tools for Google Drive");
+      expect(text).toContain("OAuth");
+      expect(text).toContain("service_tag");
+      expect(text).toContain("fullAccess: true");
     }
     const pt = buildGuide("pt");
     expect(pt).toContain("pergunte ao usuário antes de montar o plano");
@@ -286,34 +283,49 @@ describe("agent guide", () => {
 
   it("is generic: the same text on any computer, with nothing of the user's vault", () => {
     for (const lang of ["pt", "en"] as const) {
-      for (const mode of modes) {
-        const text = buildGuide(lang, undefined, mode);
-        expect(text).not.toMatch(/(^|[\s`(])[A-Za-z]:[\/]|\/Users\/|\/home\//m); // no folder path
-        expect(text).not.toMatch(/environment-variables-[a-z0-9]/); // no server name of a vault
-        expect(text).not.toMatch(/mcp__environment-variables/);
-        expect(text).toContain("list_vault_tools");
-      }
+      const text = buildGuide(lang);
+      expect(text).not.toMatch(/(^|[\s`(])[A-Za-z]:[\/]|\/Users\/|\/home\//m); // no folder path
+      expect(text).not.toMatch(/environment-variables-[a-z0-9]/); // no server name of a vault
+      expect(text).not.toMatch(/mcp__environment-variables/);
+      expect(text).toContain("list_vault_tools");
     }
   });
 
-  it("builds one prompt per task that ends with the mandatory question", () => {
-    const titles = { setup: "# Setar o ambiente MCP", single: "# Adicionar uma ferramenta", multiple: "# Adicionar várias ferramentas" };
-    for (const [mode, title] of Object.entries(titles) as Array<[GuideMode, string]>) {
-      const text = buildGuide("pt", "meu pedido", mode);
-      expect(text.startsWith(title)).toBe(true);
-      expect(text).toContain("As notas que você cria são genéricas");
-      const question = text.indexOf("## Pergunta obrigatória antes de criar qualquer coisa");
-      expect(question).toBeGreaterThan(text.indexOf("## Pedido do usuário"));
-      expect(text.indexOf("## Pedido do usuário")).toBeGreaterThan(text.indexOf("## 9."));
-      expect(text.slice(question)).toContain("não siga com a criação");
-    }
-    expect(buildGuide("pt", "meu pedido", "setup")).toContain("Quais variáveis de ambiente (segredos) devem ser configuradas?");
-    expect(buildGuide("pt", "meu pedido", "setup")).toContain("Para qual app ou serviço elas são?");
-    expect(buildGuide("en", undefined, "setup")).toContain("do not go on with the creation");
-    expect(buildGuide("pt")).toBe(buildGuide("pt", undefined, "setup"));
+  it("builds the set-up prompt, ending with the mandatory question", () => {
+    const text = buildGuide("pt", "meu pedido");
+    expect(text.startsWith("# Setar o ambiente MCP")).toBe(true);
+    expect(text).toContain("As notas que você cria são genéricas");
+    const question = text.indexOf("## Pergunta obrigatória antes de criar qualquer coisa");
+    expect(question).toBeGreaterThan(text.indexOf("## Pedido do usuário"));
+    expect(text.indexOf("## Pedido do usuário")).toBeGreaterThan(text.indexOf("## 9."));
+    expect(text.slice(question)).toContain("não siga com a criação");
+    expect(text).toContain("Quais variáveis de ambiente (segredos) essas ferramentas vão usar?");
+    expect(text).toContain("Quem cria as variáveis é você, manualmente");
+    expect(text).toContain("Para qual app ou serviço elas são?");
+    expect(text).toContain("Quais ferramentas você quer?");
+    expect(buildGuide("en")).toContain("do not go on with the creation");
     expect(buildGuide("pt")).not.toContain("## Pedido do usuário");
-    expect(buildGuide("pt", undefined, "single")).toContain("Plano resumido em vez do modelo da seção 8");
-    expect(buildGuide("en", undefined, "single")).toContain("Short plan instead of the template in section 8");
-    expect(buildGuide("en", undefined, "multiple")).toContain("one row per tool");
+  });
+
+  it("covers the catalog, MCP groups and Full access", () => {
+    const pt = buildGuide("pt");
+    expect(pt).toContain("**Baixar MCP**");
+    expect(pt).toContain("**Adicionar MCP**");
+    expect(pt).toContain("**Acesso total**");
+    const en = buildGuide("en");
+    expect(en).toContain("**Download MCP**");
+    expect(en).toContain("**Add MCP**");
+    expect(en).toContain("**Full access**");
+  });
+
+  it("records the plugin's rules in the vault's CLAUDE.md only with permission", () => {
+    const pt = buildGuide("pt");
+    expect(pt).toContain("Regras do plugin no `CLAUDE.md` do cofre (só com permissão)");
+    expect(pt).toContain("Peça permissão antes de criar ou alterar o arquivo.");
+    expect(pt).toContain("não vale como permissão para mexer no `CLAUDE.md`");
+    const en = buildGuide("en");
+    expect(en).toContain("The plugin's rules in the vault's `CLAUDE.md` (only with permission)");
+    expect(en).toContain("Ask for permission before creating or changing the file.");
+    expect(en).toContain("does not count as permission to touch `CLAUDE.md`");
   });
 });

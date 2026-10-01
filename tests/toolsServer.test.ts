@@ -7,7 +7,7 @@ import { utf8ToBase64 } from "../src/engine/placeholders";
 import { nodeTransport } from "../src/engine/transport";
 import { contextOf, createClient, findClient } from "../src/server/clients";
 import { LocalServer } from "../src/server/localServer";
-import { buildGuide, GuideMode } from "../src/tools/guide";
+import { buildGuide } from "../src/tools/guide";
 import { ToolRegistry } from "../src/tools/registry";
 import { ScriptRunner } from "../src/tools/scriptRunner";
 import { ToolsService, ToolsSettings } from "../src/tools/service";
@@ -64,7 +64,7 @@ beforeAll(async () => {
 
   const broker = new Broker(store, nodeTransport, async () => true, audit, () => ({ timeoutMs: 5000, maxResponseBytes: 1_000_000, maxRedirects: 5 }));
   registry = new ToolRegistry(source, () => ({ enabled: settings.toolsEnabled, toolTag: settings.toolTag, scriptsEnabled: settings.scriptsEnabled }));
-  const guideText = (request?: string, mode?: GuideMode) => buildGuide("en", request, mode);
+  const guideText = (request?: string) => buildGuide("en", request);
   const tools = new ToolsService({
     registry,
     source,
@@ -72,7 +72,7 @@ beforeAll(async () => {
     runner: new ScriptRunner(),
     audit,
     settings: () => settings,
-    guide: (mode) => guideText(undefined, mode),
+    guide: () => guideText(),
   });
   await registry.refresh();
 
@@ -115,7 +115,7 @@ describe("vault tools over MCP", () => {
 
   it("lists built-in, management and exposed vault tools", async () => {
     const names = (await rpc("tools/list")).result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(["list_secrets", "http_request", "get_tool_authoring_guide", "list_vault_tools", "run_vault_tool", "item_digest", "get_item"]); // vault tools sorted by note path
+    expect(names).toEqual(["list_secrets", "http_request", "get_tool_authoring_guide", "list_vault_tools", "search_vault_tools", "run_vault_tool", "item_digest", "get_item"]); // vault tools sorted by note path
     const getItem = (await rpc("tools/list")).result.tools.find((t: { name: string }) => t.name === "get_item");
     expect(getItem.inputSchema).toMatchObject({ required: ["id"], properties: { id: { type: "string" } } });
     expect(getItem.annotations.readOnlyHint).toBe(true);
@@ -165,16 +165,12 @@ describe("vault tools over MCP", () => {
     const tool = await call("get_tool_authoring_guide", {});
     expect(tool.result.content[0].text).toContain("Implementation Plan");
     const prompts = await rpc("prompts/list");
-    expect(prompts.result.prompts.map((p: { name: string }) => p.name)).toEqual(["configure_vault_tools", "add_vault_tool", "add_vault_tools"]);
+    expect(prompts.result.prompts.map((p: { name: string }) => p.name)).toEqual(["configure_vault_tools"]);
     const prompt = await rpc("prompts/get", { name: "configure_vault_tools", arguments: { request: "Google Drive tools" } });
     expect(prompt.result.messages[0].content.text).toContain("Google Drive tools");
     expect(prompt.result.messages[0].content.text).toMatch(/^# Set up the MCP environment/);
-    const single = await rpc("prompts/get", { name: "add_vault_tool", arguments: { request: "get an item" } });
-    expect(single.result.messages[0].content.text).toMatch(/^# Add one tool/);
-    const multiple = await call("get_tool_authoring_guide", { mode: "multiple" });
-    expect(multiple.result.content[0].text).toMatch(/^# Add several tools/);
-    const singleRest = await fetch(`${base}/v1/tools/guide?mode=single`, { headers: auth() });
-    expect(await singleRest.text()).toMatch(/^# Add one tool/);
+    const removed = await rpc("prompts/get", { name: "add_vault_tool", arguments: { request: "get an item" } });
+    expect(removed.error?.message).toMatch(/Unknown prompt/);
     const rest = await fetch(`${base}/v1/tools/guide`, { headers: auth() });
     expect(await rest.text()).toContain("ask the user before writing the plan");
   });
@@ -225,5 +221,38 @@ describe("vault tools over MCP", () => {
     const res = await fetch(`${base}/mcp`, { headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" } });
     expect(res.status).toBe(405);
     settings.toolsEnabled = true;
+  });
+});
+
+describe("search_vault_tools and vault_tool_hint", () => {
+  beforeAll(() => registry.refresh());
+
+  it("finds the tool for an endpoint, hidden ones too, with how to run it", async () => {
+    const res = await call("search_vault_tools", { method: "GET", url: "https://example.com/items/42" });
+    const results = res.result.structuredContent.results as Array<{ name: string; endpoint: string; run: { call: string; arguments: unknown } }>;
+    expect(results.map((r) => r.name)).toEqual(expect.arrayContaining(["get_item", "hidden_item"]));
+    const visible = results.find((r) => r.name === "get_item")!;
+    expect(visible.endpoint).toBe("GET /items/{id}");
+    expect(visible.run).toEqual({ call: "get_item", arguments: { id: "42" } });
+    const hidden = results.find((r) => r.name === "hidden_item")!;
+    expect(hidden.run).toEqual({ call: "run_vault_tool", arguments: { name: "hidden_item", arguments: { id: "42" } } });
+  });
+
+  it("finds tools by keywords and says when nothing matches", async () => {
+    const byWords = await call("search_vault_tools", { query: "digest" });
+    expect(byWords.result.structuredContent.results[0].name).toBe("item_digest");
+    const none = await call("search_vault_tools", { method: "POST", url: "/nothing/here" });
+    expect(none.result.structuredContent.results).toEqual([]);
+    expect(none.result.structuredContent.note).toMatch(/http_request/);
+  });
+
+  it("runs http_request as asked and points to the vault tool that covers it", async () => {
+    const res = await call("http_request", { method: "GET", url: `http://127.0.0.1:${upstreamPort}/items/7`, headers: { Authorization: "{{basic:JIRA_ACME}}" } });
+    expect(res.result.isError).toBe(false);
+    expect(lastPath).toBe("/items/7");
+    expect(res.result.structuredContent.vault_tool_hint.tool).toBe("get_item");
+    expect(res.result.structuredContent.vault_tool_hint.run).toEqual({ call: "get_item", arguments: { id: "7" } });
+    const other = await call("http_request", { method: "GET", url: `http://127.0.0.1:${upstreamPort}/other`, headers: { Authorization: "{{basic:JIRA_ACME}}" } });
+    expect(other.result.structuredContent.vault_tool_hint).toBeUndefined();
   });
 });

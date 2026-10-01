@@ -74,6 +74,8 @@ export interface PluginData {
   mcpApps: McpAppConfig[];
   /** Settings migrations already applied (see migrate). */
   settingsRevision: number;
+  /** Ids of the bundled instance templates already created once (see serviceTemplates.ts). */
+  createdTemplates: string[];
 }
 
 /** Auto-lock used to be on (15 minutes) by default. */
@@ -97,5 +99,6 @@ export function withDefaults(raw: Partial<PluginData> | null | undefined): Plugi
       ? raw.mcpGroups.filter((g): g is McpGroupConfig => typeof g?.id === "string" && typeof g?.name === "string" && Array.isArray(g?.links))
       : [],
     mcpApps: Array.isArray(raw?.mcpApps) ? raw.mcpApps.filter((a): a is McpAppConfig => typeof a?.id === "string" && typeof a?.name === "string") : [],
+    createdTemplates: Array.isArray(raw?.createdTemplates) ? raw.createdTemplates.filter((id): id is string => typeof id === "string") : [],
   };
 }

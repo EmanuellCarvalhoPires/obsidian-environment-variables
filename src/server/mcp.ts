@@ -3,7 +3,6 @@
 // Implemented by hand: two built-in tools, plus the vault tools when that feature is on.
 
 import { Broker } from "../engine/broker";
-import { GuideMode } from "../tools/guide";
 import type { ToolsService } from "../tools/service";
 import { ClientContext } from "./clients";
 
@@ -23,33 +22,20 @@ const TOOLS_INSTRUCTIONS = [
   "Vault tools are on: other tools of this server are defined by notes in the user's vault.",
   "Before creating or changing vault tools (e.g. a set of tools for a new app or API), call get_tool_authoring_guide and follow it:",
   "ask the user for missing information, write an implementation plan and wait for approval before editing notes.",
-  "Use list_vault_tools to check tool notes and run_vault_tool to run a tool that is not in your list.",
+  "Prefer vault tools over http_request: before calling http_request, call search_vault_tools with the method and URL you would use (or keywords) and, if a tool covers the endpoint, use it (directly if it is in your tool list, otherwise through run_vault_tool).",
+  "Use http_request only when no vault tool fits.",
+  "Use list_vault_tools to check tool notes after creating or editing them, and run_vault_tool to run a tool that is not in your list.",
 ].join(" ");
 
 export const CONFIGURE_PROMPT = "configure_vault_tools";
 
-/** The MCP prompts, one per guide mode. configure_vault_tools keeps its name: it sets up the MCP environment. */
-const PROMPTS: Array<{ name: string; mode: GuideMode; title: string; description: string; example: string }> = [
+/** The MCP prompt. It keeps the name configure_vault_tools: it sets up the MCP environment. */
+const PROMPTS: Array<{ name: string; title: string; description: string; example: string }> = [
   {
     name: CONFIGURE_PROMPT,
-    mode: "setup",
     title: "Set up the MCP environment",
-    description: "Set up the vault's MCP environment for an app or API: service notes for each instance, secrets and the tools. Loads the plugin's guide for AI agents.",
+    description: "Set up the vault's MCP environment for an app or API, or add tools to one already set up: catalog packages, service notes for each instance, secrets, tools and MCP groups. Loads the plugin's guide for AI agents.",
     example: "set up Google Drive: list and search files",
-  },
-  {
-    name: "add_vault_tool",
-    mode: "single",
-    title: "Add one tool",
-    description: "Add a single MCP tool defined by a note, reusing the service notes and secrets the vault already has. Short plan, then approval.",
-    example: "a tool to get a Jira issue by key",
-  },
-  {
-    name: "add_vault_tools",
-    mode: "multiple",
-    title: "Add several tools",
-    description: "Add several MCP tools defined by notes, sharing service and request notes. Full implementation plan, then approval.",
-    example: "tools to list, get and comment on Jira issues",
   },
 ];
 
@@ -68,7 +54,8 @@ const TOOLS = [
     description:
       "Send an HTTP request. Placeholders {{secret:NAME}}, {{secret:NAME.user}}, {{basic:NAME}} (Basic auth from username + token) and {{bearer:NAME}} are replaced with real values right before sending. " +
       "By default placeholders are only accepted in header values, and only for the hosts allowed for that key (a key marked allowAnyHost works with any https host, but the user must approve every request). " +
-      "Example header: {\"Authorization\": \"{{basic:JIRA_ACME}}\"}. Values found in the response are masked as ***.",
+      "Example header: {\"Authorization\": \"{{basic:JIRA_ACME}}\"}. Values found in the response are masked as ***. " +
+      "When vault tools are on, this is the last resort: first call search_vault_tools and use the vault tool that covers the endpoint, if there is one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -100,8 +87,8 @@ export interface McpContext {
   client: ClientContext;
   version: string;
   tools?: ToolsService;
-  /** The authoring guide for the chosen prompt with the user's request appended, for prompts/get. */
-  guide?: (request?: string, mode?: GuideMode) => string;
+  /** The authoring guide with the user's request appended, for prompts/get. */
+  guide?: (request?: string) => string;
 }
 
 export async function handleMcpMessage(message: unknown, ctx: McpContext): Promise<JsonRpcResponse | null> {
@@ -153,7 +140,7 @@ export async function handleMcpMessage(message: unknown, ctx: McpContext): Promi
         id,
         result: {
           description: prompt.description,
-          messages: [{ role: "user", content: { type: "text", text: ctx.guide(request, prompt.mode) } }],
+          messages: [{ role: "user", content: { type: "text", text: ctx.guide(request) } }],
         },
       };
     }
@@ -180,16 +167,15 @@ async function callTool(params: Record<string, unknown>, ctx: McpContext) {
     return toolResult(res, !res.ok);
   }
   if (name === "http_request") {
+    const method = typeof args.method === "string" ? args.method : undefined;
+    const url = typeof args.url === "string" ? args.url : "";
     const res = await ctx.broker.execute(
-      {
-        method: typeof args.method === "string" ? args.method : undefined,
-        url: typeof args.url === "string" ? args.url : "",
-        headers: args.headers as Record<string, string> | undefined,
-        body: args.body as string | undefined,
-      },
+      { method, url, headers: args.headers as Record<string, string> | undefined, body: args.body as string | undefined },
       ctx.client,
     );
-    return toolResult(res, !res.ok);
+    // The request runs as asked; a vault tool covering the endpoint is only pointed out.
+    const hint = await ctx.tools?.hintFor(method, url);
+    return toolResult(hint ? { vault_tool_hint: hint, ...res } : res, !res.ok);
   }
   if (typeof name === "string" && ctx.tools?.handles(name)) {
     const out = await ctx.tools.callMcp(name, args, ctx.client);

@@ -719,3 +719,12 @@
   padding-right: 0;
   margin-right: 0;
 }
+
+/* How to use */
+.ev-howto {
+  padding: 6px 0;
+}
+
+.ev-howto-title {
+  font-weight: var(--font-semibold);
+}

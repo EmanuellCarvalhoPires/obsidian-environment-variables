@@ -92,6 +92,7 @@ export const RESERVED_TOOL_NAMES = new Set([
   "get_tool_authoring_guide",
   "list_vault_tools",
   "run_vault_tool",
+  "search_vault_tools",
 ]);
 
 export type ToolErrorCode =
