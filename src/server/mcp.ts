@@ -22,7 +22,9 @@ const TOOLS_INSTRUCTIONS = [
   "Vault tools are on: other tools of this server are defined by notes in the user's vault.",
   "Before creating or changing vault tools (e.g. a set of tools for a new app or API), call get_tool_authoring_guide and follow it:",
   "ask the user for missing information, write an implementation plan and wait for approval before editing notes.",
-  "Use list_vault_tools to check tool notes and run_vault_tool to run a tool that is not in your list.",
+  "Prefer vault tools over http_request: before calling http_request, call search_vault_tools with the method and URL you would use (or keywords) and, if a tool covers the endpoint, use it (directly if it is in your tool list, otherwise through run_vault_tool).",
+  "Use http_request only when no vault tool fits.",
+  "Use list_vault_tools to check tool notes after creating or editing them, and run_vault_tool to run a tool that is not in your list.",
 ].join(" ");
 
 export const CONFIGURE_PROMPT = "configure_vault_tools";
@@ -52,7 +54,8 @@ const TOOLS = [
     description:
       "Send an HTTP request. Placeholders {{secret:NAME}}, {{secret:NAME.user}}, {{basic:NAME}} (Basic auth from username + token) and {{bearer:NAME}} are replaced with real values right before sending. " +
       "By default placeholders are only accepted in header values, and only for the hosts allowed for that key (a key marked allowAnyHost works with any https host, but the user must approve every request). " +
-      "Example header: {\"Authorization\": \"{{basic:JIRA_ACME}}\"}. Values found in the response are masked as ***.",
+      "Example header: {\"Authorization\": \"{{basic:JIRA_ACME}}\"}. Values found in the response are masked as ***. " +
+      "When vault tools are on, this is the last resort: first call search_vault_tools and use the vault tool that covers the endpoint, if there is one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -164,16 +167,15 @@ async function callTool(params: Record<string, unknown>, ctx: McpContext) {
     return toolResult(res, !res.ok);
   }
   if (name === "http_request") {
+    const method = typeof args.method === "string" ? args.method : undefined;
+    const url = typeof args.url === "string" ? args.url : "";
     const res = await ctx.broker.execute(
-      {
-        method: typeof args.method === "string" ? args.method : undefined,
-        url: typeof args.url === "string" ? args.url : "",
-        headers: args.headers as Record<string, string> | undefined,
-        body: args.body as string | undefined,
-      },
+      { method, url, headers: args.headers as Record<string, string> | undefined, body: args.body as string | undefined },
       ctx.client,
     );
-    return toolResult(res, !res.ok);
+    // The request runs as asked; a vault tool covering the endpoint is only pointed out.
+    const hint = await ctx.tools?.hintFor(method, url);
+    return toolResult(hint ? { vault_tool_hint: hint, ...res } : res, !res.ok);
   }
   if (typeof name === "string" && ctx.tools?.handles(name)) {
     const out = await ctx.tools.callMcp(name, args, ctx.client);

@@ -8,6 +8,7 @@ import { inputSchema, validateArgs } from "./definition";
 import { ToolRegistry } from "./registry";
 import { parseRequestBlock, resolveRequest } from "./requestNote";
 import { ScriptRunner } from "./scriptRunner";
+import { compileEndpoint, EndpointPattern, endpointOf, howToRun, matchEndpoint, RunHint, searchTools } from "./toolSearch";
 import { NoteSource, ToolEntry, ToolError, VaultNote } from "./types";
 
 export interface ToolsSettings {
@@ -59,8 +60,27 @@ export const META_TOOLS: McpToolDefinition[] = [
     name: "list_vault_tools",
     title: "List vault tools and their status",
     description:
-      "Lists every tool note found in the vault with its status (ready, scripts-disabled, invalid), parameters and problems to fix, plus the saved request notes. Use it to check your work after creating or editing tool notes.",
+      "Lists every tool note found in the vault with its status (ready, scripts-disabled, invalid), parameters and problems to fix, plus the saved request notes. Use it to check your work after creating or editing tool notes. " +
+      "The output is large: to find a tool for a task, use search_vault_tools.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "search_vault_tools",
+    title: "Search vault tools",
+    description:
+      "Finds vault tools for a task, including tools with expose: false. Pass the method and URL you would send with http_request to find the tool that covers that endpoint, and/or keywords (e.g. \"jira changelog\"). " +
+      "Returns a short list with name, description, parameters and how to run each tool (run). Call it before http_request.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Keywords, e.g. \"jira issue changelog\"." },
+        method: { type: "string", description: "HTTP method of the endpoint, e.g. GET." },
+        url: { type: "string", description: "URL or path of the endpoint, e.g. https://acme.atlassian.net/rest/api/3/issue/ABC-1/changelog." },
+        limit: { type: "number", description: "Maximum results (default 10, max 50)." },
+      },
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -84,8 +104,21 @@ export const META_TOOLS: McpToolDefinition[] = [
 const META_NAMES = new Set(META_TOOLS.map((t) => t.name));
 const MAX_QUERY_RESULTS = 500;
 
+/** What http_request adds to its result when a vault tool covers the endpoint it just called. */
+export interface VaultToolHint {
+  tool: string;
+  endpoint: string;
+  run: RunHint;
+  message: string;
+}
+
 export class ToolsService {
-  constructor(private readonly deps: ToolsDeps) {}
+  /** The endpoints of the request tools, rebuilt after any tool note changes. */
+  private endpoints: Promise<EndpointPattern[]> | null = null;
+
+  constructor(private readonly deps: ToolsDeps) {
+    deps.registry.onChange(() => (this.endpoints = null));
+  }
 
   enabled(): boolean {
     return this.deps.settings().toolsEnabled;
@@ -120,6 +153,7 @@ export class ToolsService {
       await this.ready();
       if (name === "get_tool_authoring_guide") return { text: this.deps.guide(), isError: false };
       if (name === "list_vault_tools") return { value: this.status(), isError: false };
+      if (name === "search_vault_tools") return { value: searchTools(this.deps.registry.list(), await this.endpointIndex(), args), isError: false };
       if (name === "run_vault_tool") {
         if (typeof args.name !== "string") throw new ToolError("invalid_argument", "name is required.");
         return { value: await this.run(args.name, args.arguments, client), isError: false };
@@ -287,6 +321,46 @@ export class ToolsService {
     const res = await this.deps.broker.execute(input, client, { fromVaultTool: true });
     if (!res.ok) throw new ToolError("request_failed", `${res.error.code}: ${res.error.message}`);
     return responseOf(res);
+  }
+
+  /**
+   * For http_request: the vault tool that covers this method + URL, if any, so the agent
+   * uses it next time. Never fails the request.
+   */
+  async hintFor(method: string | undefined, url: string): Promise<VaultToolHint | undefined> {
+    if (!this.enabled() || !url) return undefined;
+    try {
+      await this.ready();
+      const best = matchEndpoint(await this.endpointIndex(), method, url)[0];
+      if (!best) return undefined;
+      const tool = best.pattern.tool;
+      return {
+        tool: tool.name,
+        endpoint: `${best.pattern.method} ${best.pattern.path}`,
+        run: howToRun(tool, best.args),
+        message: `The vault tool "${tool.name}" covers this endpoint. Next time use it instead of http_request.`,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private endpointIndex(): Promise<EndpointPattern[]> {
+    this.endpoints ??= this.buildEndpointIndex();
+    return this.endpoints;
+  }
+
+  private async buildEndpointIndex(): Promise<EndpointPattern[]> {
+    const out: EndpointPattern[] = [];
+    for (const entry of this.deps.registry.list()) {
+      if (entry.kind !== "request" || entry.status !== "ready" || !entry.request) continue;
+      const note = this.deps.source.resolve(entry.request, entry.notePath);
+      if (!note) continue;
+      const endpoint = endpointOf(await this.deps.source.read(note), note.frontmatter);
+      const pattern = endpoint && compileEndpoint(entry, endpoint.method, endpoint.path);
+      if (pattern) out.push(pattern);
+    }
+    return out;
   }
 
   private resolveNote(ref: string, fromPath: string, what: string): VaultNote {
