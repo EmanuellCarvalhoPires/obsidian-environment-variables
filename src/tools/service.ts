@@ -6,7 +6,7 @@ import { RequestInput } from "../engine/prepare";
 import { ClientContext } from "../server/clients";
 import { inputSchema, validateArgs } from "./definition";
 import { ToolRegistry } from "./registry";
-import { parseRequestBlock, resolveRequest } from "./requestNote";
+import { parseRequestBlock, resolveRequest, servicePlaceholderNames } from "./requestNote";
 import { ScriptRunner } from "./scriptRunner";
 import { compileEndpoint, EndpointPattern, endpointOf, howToRun, matchEndpoint, RunHint, searchTools } from "./toolSearch";
 import { NoteSource, ToolEntry, ToolError, VaultNote } from "./types";
@@ -314,11 +314,13 @@ export class ToolsService {
     // A service override from a tool is relative to the tool note; the request's own link to the request note.
     const service = serviceRef ? this.resolveNote(serviceRef, serviceOverride ? fromPath : note.path, "Service note") : undefined;
     const input = resolveRequest(tpl, { params, service, noteName: note.name });
-    return this.send(input, client);
+    // Secrets of the service note are masked in the response even when this request does not send
+    // them (e.g. reading an automation rule that stores an injected token).
+    return this.send(input, client, service ? servicePlaceholderNames(service.frontmatter) : []);
   }
 
-  private async send(input: RequestInput, client: ClientContext) {
-    const res = await this.deps.broker.execute(input, client, { fromVaultTool: true });
+  private async send(input: RequestInput, client: ClientContext, alsoRedact: string[] = []) {
+    const res = await this.deps.broker.execute(input, client, { fromVaultTool: true, alsoRedact });
     if (!res.ok) throw new ToolError("request_failed", `${res.error.code}: ${res.error.message}`);
     return responseOf(res);
   }

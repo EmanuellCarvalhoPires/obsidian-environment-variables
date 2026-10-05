@@ -75,8 +75,11 @@ export class Broker {
    * approval dialog opens in Obsidian, not even for variables that may go to any host. The agent guide
    * requires the agent to ask the user (showing the destination) before running such a tool.
    * Hosts, placement, redirects and masking are still enforced.
+   *
+   * `alsoRedact`: names of secrets that are not sent but must still be masked in the response, e.g.
+   * the secrets of a service note (a GET of an automation rule returns the tokens stored in it).
    */
-  async execute(input: RequestInput, client: ClientContext, options: { fromVaultTool?: boolean } = {}): Promise<BrokerResult> {
+  async execute(input: RequestInput, client: ClientContext, options: { fromVaultTool?: boolean; alsoRedact?: string[] } = {}): Promise<BrokerResult> {
     const who = client.name;
     if (!this.store.isUnlocked) {
       this.audit.add({ client: who, action: "request", secrets: [], method: input?.method, outcome: "locked" });
@@ -103,7 +106,8 @@ export class Broker {
 
     const names = prepared.usedSecrets.map((s) => s.name);
     const target = prepared.displayTarget;
-    const redactor = createRedactor(prepared.usedSecrets);
+    const extra = (options.alsoRedact ?? []).map((n) => this.store.get(n)).filter((s): s is NonNullable<typeof s> => s !== undefined);
+    const redactor = createRedactor([...prepared.usedSecrets, ...extra]);
 
     const anyHost = prepared.usedSecrets.filter((s) => s.allowAnyHost === true).map((s) => s.name);
     const needsApproval = options.fromVaultTool ? false : prepared.needsApproval;
