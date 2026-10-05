@@ -93,11 +93,42 @@ Regras do bloco ```` ```http ````:
 - 1ª linha: `MÉTODO URL` (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS). A URL tem que ser absoluta (`https://...`) depois de preenchida.
 - Depois, um header por linha no formato `Nome: valor`.
 - Uma linha em branco e, se houver, o body.
-- `{{service.<propriedade>}}`: valor da propriedade na nota de serviço **da instância escolhida na chamada**, inserido como está. Pode conter placeholders de segredo. Nunca escreva na requisição uma URL, um ID ou um segredo de uma instância.
+- `{{service.<propriedade>}}`: valor da propriedade na nota de serviço **da instância escolhida na chamada**, inserido como está. Pode conter placeholders de segredo. Propriedades aninhadas usam ponto: `{{service.automation_web_auth.bitbucket}}`. O valor final precisa ser texto ou número. Nunca escreva na requisição uma URL, um ID ou um segredo de uma instância.
 - `{{param:<nome>}}`: argumento da chamada. Na URL o valor é codificado. Num body JSON, texto vai **entre aspas** (`"{{param:titulo}}"`) e números, booleanos, objetos e listas **sem aspas** (`{{param:limite}}`).
 - Um parâmetro opcional não informado que é o valor inteiro de um par da query (`?fields={{param:fields}}`) faz o par sumir da URL. Em qualquer outro lugar, a falta de um parâmetro dá erro.
 - Placeholders de segredo só funcionam nos **headers**, a menos que o segredo permita URL ou body. O host da URL nunca pode vir de um placeholder de segredo.
-- Argumentos da IA nunca podem conter placeholders de segredo: o plugin recusa.
+- Argumentos da IA nunca podem conter placeholders de segredo: o plugin recusa. Para pôr um segredo dentro de um body enviado pela IA, use `inject_service` (seção 4.2.1).
+
+#### 4.2.1 Segredos dentro de um body enviado pela IA (`inject_service`)
+
+Algumas APIs guardam um token dentro do JSON enviado: por exemplo, uma regra de automação (Jira/Confluence Automation) cuja ação de web request chama outra API com um header `Authorization`. Para isso:
+
+1. Na nota de serviço, declare um mapa com os valores que podem ser injetados:
+
+   ```yaml
+   automation_web_auth:
+     bitbucket: "{{basic:BITBUCKET_APP}}"
+     github: "{{bearer:GITHUB_PAT}}"
+   ```
+
+2. No body da requisição, use o modificador `|inject_service:<mapa>` no parâmetro:
+
+   ```http
+   PUT {{service.url}}/gateway/api/automation/.../rule/{{param:rule_id}}
+   Authorization: {{service.auth}}
+   Content-Type: application/json
+
+   {{param:rule|inject_service:automation_web_auth}}
+   ```
+
+3. Na chamada, a IA escreve o marcador `{{inject:<chave>}}` onde o segredo deve entrar, ex.: `{ "name": "Authorization", "value": "{{inject:bitbucket}}" }`. O plugin troca cada marcador pelo valor da chave no mapa antes de enviar.
+
+Regras:
+
+- Só as chaves declaradas no mapa da nota de serviço podem ser injetadas: a IA escolhe a chave, nunca o segredo. Chave desconhecida, marcador malformado, marcador em nome de campo ou marcador num parâmetro sem `inject_service` dão erro.
+- `inject_service` só vale no body, nunca na URL nem nos headers.
+- O segredo injetado vai para o host da requisição (ex.: a API de automação, que o guarda na regra). Por isso ele precisa **permitir o body** e ter **esse host** nos hosts permitidos. Senão o plugin bloqueia (`placement_not_allowed` ou `host_not_allowed`).
+- Todos os segredos citados na nota de serviço são mascarados (`***`) nas respostas das requisições que usam essa nota, mesmo quando a requisição não os envia (ex.: ao ler a regra de volta). Por isso, ao atualizar uma regra lida antes, troque o `***` pelo marcador `{{inject:<chave>}}` em vez de reenviar o `***`.
 
 ### 4.3 Nota de ferramenta, `kind: request` (tag de ferramenta)
 

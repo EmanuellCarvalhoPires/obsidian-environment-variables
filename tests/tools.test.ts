@@ -328,4 +328,19 @@ describe("agent guide", () => {
     expect(en).toContain("Ask for permission before creating or changing the file.");
     expect(en).toContain("does not count as permission to touch `CLAUDE.md`");
   });
+
+  it("explains nested service properties and secret injection into the body", () => {
+    for (const lang of ["pt", "en"] as const) {
+      const text = buildGuide(lang);
+      expect(text).toContain("{{service.automation_web_auth.bitbucket}}");
+      expect(text).toContain("{{param:rule|inject_service:automation_web_auth}}");
+      expect(text).toContain("{{inject:bitbucket}}");
+      expect(text).toContain("4.2.1");
+      expect(text).toContain("placement_not_allowed");
+    }
+    expect(buildGuide("pt")).toContain("a IA escolhe a chave, nunca o segredo");
+    expect(buildGuide("pt")).toContain("um `***` vindo de uma resposta nunca é reenviado");
+    expect(buildGuide("en")).toContain("the AI picks the key, never the secret");
+    expect(buildGuide("en")).toContain("a `***` coming from a response is never sent back");
+  });
 });

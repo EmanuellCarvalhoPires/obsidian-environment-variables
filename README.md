@@ -133,6 +133,20 @@ params:
 
 The plugin adds the `instance` parameter by itself, with the instances it finds ("Jira - ACME" and "Jira - Globex" become `ACME` and `Globex`), so a new instance only needs a new service note: `jira_get_issue({ instance: "ACME", key: "ACME-123" })`.
 
+Nested service properties use dots: `{{service.automation_web_auth.bitbucket}}`. When an API stores a token inside the body you send (e.g. a Jira/Confluence Automation rule whose web request calls another API), declare a map in the service note and add `|inject_service:<map>` to the body parameter:
+
+````markdown
+```http
+PUT {{service.url}}/gateway/api/automation/.../rule/{{param:rule_id}}
+Authorization: {{service.auth}}
+Content-Type: application/json
+
+{{param:rule|inject_service:automation_web_auth}}
+```
+````
+
+The AI writes `{{inject:bitbucket}}` where the token goes, and the plugin replaces it with `automation_web_auth.bitbucket` from the service note (e.g. `"{{basic:BITBUCKET_APP}}"`) before sending. Only keys declared in the map can be injected, the secret still needs body use allowed and the request's host in its allowed hosts, and every secret named in the service note is masked as `***` in the responses of requests that use it.
+
 ### Instance templates
 
 When the plugin is installed, it creates one instance (service note) template for each service the catalog's packages use: **Atlassian Access - Template** (`atlassian/instance`: Jira, JSM, Confluence, Automation, Assets), **Bitbucket Access - Template** (`bitbucket/workspace`) and **Trello Access - Template** (`trello/account`), in an `Instances` folder next to the `MCP Tools` note and in the plugin's language. Each one is created once: a template you delete is not created again. Duplicate a template, name the copy after your instance, remove the `template` tag and fill in its properties; each template, and **How to use → How to fill in each template** in the panel, explains every property.
