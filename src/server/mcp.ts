@@ -2,7 +2,8 @@
 // in localServer.ts only carries notifications/tools/list_changed).
 // Implemented by hand: two built-in tools, plus the vault tools when that feature is on.
 
-import { Broker } from "../engine/broker";
+import { ActivityTrace } from "../activity/activityLog";
+import { Broker, outcomeOf } from "../engine/broker";
 import type { ToolsService } from "../tools/service";
 import { ClientContext } from "./clients";
 
@@ -162,8 +163,27 @@ function promptsOf(ctx: McpContext) {
 async function callTool(params: Record<string, unknown>, ctx: McpContext) {
   const name = params.name;
   const args = (params.arguments ?? {}) as Record<string, unknown>;
+  // One activity session per tool call: it is what the panel shows as one dropdown.
+  const trace = ctx.broker.activity.begin({ client: ctx.client.name, tool: typeof name === "string" ? name : "?", source: "mcp" });
+  trace.line("step", "act.line.mcpCall", { tool: typeof name === "string" ? name : "?", client: ctx.client.name });
+  let failed = true;
+  try {
+    const result = await runTool(name, args, ctx, trace);
+    failed = result.isError === true;
+    return result;
+  } catch (err) {
+    trace.line("error", "act.line.internalError", { message: err instanceof Error ? err.message : String(err) });
+    throw err;
+  } finally {
+    // A tool that knows how it ended already closed the session; this is the fallback.
+    trace.end(failed ? "error" : "ok");
+  }
+}
+
+async function runTool(name: unknown, args: Record<string, unknown>, ctx: McpContext, trace: ActivityTrace) {
   if (name === "list_secrets") {
-    const res = ctx.broker.listSecrets(ctx.client);
+    const res = ctx.broker.listSecrets(ctx.client, trace);
+    trace.end(res.ok ? "ok" : "locked");
     return toolResult(res, !res.ok);
   }
   if (name === "http_request") {
@@ -172,16 +192,19 @@ async function callTool(params: Record<string, unknown>, ctx: McpContext) {
     const res = await ctx.broker.execute(
       { method, url, headers: args.headers as Record<string, string> | undefined, body: args.body as string | undefined },
       ctx.client,
+      { trace },
     );
+    trace.end(outcomeOf(res), res.ok ? res.status : undefined);
     // The request runs as asked; a vault tool covering the endpoint is only pointed out.
     const hint = await ctx.tools?.hintFor(method, url);
     return toolResult(hint ? { vault_tool_hint: hint, ...res } : res, !res.ok);
   }
   if (typeof name === "string" && ctx.tools?.handles(name)) {
-    const out = await ctx.tools.callMcp(name, args, ctx.client);
+    const out = await ctx.tools.callMcp(name, args, ctx.client, trace);
     if (out.text !== undefined) return { content: [{ type: "text", text: out.text }], isError: out.isError };
     return toolResult(out.value, out.isError);
   }
+  trace.line("error", "act.line.unknownTool", { tool: String(name) });
   return toolResult({ ok: false, error: { code: "unknown_tool", message: `Unknown tool ${String(name)}` } }, true);
 }
 

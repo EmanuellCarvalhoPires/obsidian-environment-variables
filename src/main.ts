@@ -1,4 +1,5 @@
 import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon } from "obsidian";
+import { ActivityLog } from "./activity/activityLog";
 import { AuditLog } from "./audit/auditLog";
 import { Broker } from "./engine/broker";
 import { detectToken } from "./engine/tokenPatterns";
@@ -34,6 +35,7 @@ import { ToolRegistry } from "./tools/registry";
 import { NoteSource } from "./tools/types";
 import { ScriptRunner } from "./tools/scriptRunner";
 import { ToolsService } from "./tools/service";
+import { ACTIVITY_VIEW_TYPE, ActivityView } from "./ui/activityView";
 import { defaultLogoFor } from "./ui/defaultLogos";
 import { ApprovalModal, referenceFor, SecretModal, SecretPickerModal } from "./ui/modals";
 import { EnvironmentVariablesSettingTab } from "./ui/settingsTab";
@@ -49,6 +51,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   data!: PluginData;
   store!: SecretStore;
   audit!: AuditLog;
+  /** Live terminal of what the AI clients do. In memory only. */
+  activity!: ActivityLog;
   broker!: Broker;
   server: LocalServer | null = null;
   registry!: ToolRegistry;
@@ -94,6 +98,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       this.data.audit = entries;
       this.scheduleSave();
     });
+    this.activity = new ActivityLog();
     this.broker = new Broker(
       this.store,
       nodeTransport,
@@ -105,6 +110,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
         maxRedirects: 5,
       }),
       () => this.touch(),
+      this.activity,
     );
 
     // Vault tools: MCP tools defined by notes, found by tag.
@@ -133,6 +139,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     });
 
     this.registerView(VIEW_TYPE, (leaf) => new EnvironmentVariablesView(leaf, this));
+    this.registerView(ACTIVITY_VIEW_TYPE, (leaf) => new ActivityView(leaf, this));
 
     // Left ribbon icon: key when unlocked, lock when locked.
     this.ribbon = this.addRibbonIcon(ICON_LOCKED, t("ribbon.locked"), () => void this.activateView());
@@ -144,6 +151,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.updateRibbon();
 
     this.addCommand({ id: "open-panel", name: t("cmd.open"), callback: () => void this.activateView() });
+    this.addCommand({ id: "open-activity", name: t("cmd.openActivity"), callback: () => void this.activateActivityView() });
     this.addCommand({ id: "lock", name: t("cmd.lock"), callback: () => this.lock() });
     this.addCommand({
       id: "insert-reference",
@@ -228,6 +236,18 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     }
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /** The live activity panel, in its own tab so it can sit next to the notes while an AI client works. */
+  async activateActivityView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(ACTIVITY_VIEW_TYPE);
+    if (existing.length > 0) {
+      await this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: ACTIVITY_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
   }
 
