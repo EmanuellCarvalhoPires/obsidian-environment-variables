@@ -169,6 +169,21 @@ Script tools are off until you turn on **Enable script tools**. The code runs in
 
 The plugin does not ask for approval to run a tool: permission is left to your AI client, which asks before calling an MCP tool (in Claude Code, unless you allowed that tool or turned permissions off). Requests made by vault tools skip the per-variable **Approval** setting too, including variables that allow any host; it still applies to `http_request` and REST calls. For any-host variables the agent guide requires the AI to show you the destination URL and ask before every run: the plugin itself no longer checks that address for tool requests, so prefer exact hosts. Keep in mind that an agent that can edit notes can also change a script, so review the tool notes it creates.
 
+## Live activity
+
+See what your AI clients are doing while they do it. Open it with the **Live activity** button in the panel (Logs section) or the command **Open live activity**. It opens in its own tab, so you can keep it next to your notes.
+
+Every tool call from an AI client (`http_request`, `list_secrets`, a vault tool) is a dropdown, newest first, with a terminal inside that updates line by line:
+
+- the request as the AI sent it, with the placeholders still in place (`Authorization: {{basic:JIRA_ACME}}`);
+- the placeholders found and the variable behind each one, the checks they passed (client access, where the variable may go, allowed host) and the replacement, shown as `{{basic:JIRA_ACME}}  ->  Basic ********`;
+- the approval: waiting for you in Obsidian, granted, denied, or not needed;
+- the sending, any redirect and whether it was followed, the response status, the response headers and body, and how many values were masked in it.
+
+The header of each dropdown shows the tool, the target, the **names** of the variables used, the status (running, OK with the HTTP status, denied, blocked, locked, error) and how long it took. For a vault tool it also shows its arguments, the script's `ctx` calls and every request it sent. You can filter (all, running, problems), open new calls automatically, expand or collapse all, copy one terminal as text, and clear the finished calls.
+
+The panel never shows a value, only names: every line goes through the same masking as the responses, with every stored variable, not just the ones used by the call. It is kept in memory only (up to 200 calls, 400 lines each) and is cleared when the plugin reloads; it is not written to `data.json`.
+
 ## Security
 
 - **Encryption:** AES-256-GCM with a key derived from your master password (PBKDF2-SHA256, 600,000 iterations), using the Web Crypto API. The master password is never stored. The decrypted variables only exist in memory while the vault is unlocked.
@@ -201,7 +216,7 @@ The plugin does not ask for approval to run a tool: permission is left to your A
 
 - **Bundled code:** the plugin includes QuickJS (MIT), compiled to WebAssembly, to run script tools. It is only used when script tools are on.
 - **Network use:** the plugin runs a local HTTP server on `127.0.0.1` (port 27150 by default) when you turn it on, and sends HTTP requests only to the hosts you configure for each variable, when an authorized client asks it to. It does not contact any other service.
-- **Files:** the encrypted variables are stored in `<vault>/.obsidian/plugins/environment-variables/vault.enc`. Settings, client token hashes and the usage log are stored in the plugin's `data.json`, which contains no values. Vault tools only read notes; they never write to your vault. By default it also keeps the **names and types** of your variables (never the values), so you can insert references while the vault is locked; turn off **Show variable names while locked** to keep names inside the encrypted file only.
+- **Files:** the encrypted variables are stored in `<vault>/.obsidian/plugins/environment-variables/vault.enc`. Settings, client token hashes and the usage log are stored in the plugin's `data.json`, which contains no values. The live activity panel is kept in memory only. Vault tools only read notes; they never write to your vault. By default it also keeps the **names and types** of your variables (never the values), so you can insert references while the vault is locked; turn off **Show variable names while locked** to keep names inside the encrypted file only.
 - **Outside the vault, only when you click Connect or Disconnect for an AI tool:**
   - **Claude Code:** the plugin looks for the `claude` program in its usual install locations and runs `claude mcp add` / `claude mcp remove`. Claude Code then updates its own configuration. To tell its own entry from another vault's, the plugin also reads (never writes) `~/.claude.json`.
   - **Codex:** the plugin reads and updates `~/.codex/config.toml`. It only adds or removes its own block, between `# >>> environment-variables` and `# <<< environment-variables` markers, and refuses to write if you already added that server by hand.

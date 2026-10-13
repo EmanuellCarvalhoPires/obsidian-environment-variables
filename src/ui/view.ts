@@ -637,6 +637,7 @@ export class EnvironmentVariablesView extends ItemView {
     const section = root.createDiv({ cls: "ev-section" });
     const entries = this.plugin.audit.list().slice(0, 100);
     const heading = sectionHeading(section, t("view.section.logs"));
+    heading.addButton((b) => b.setButtonText(t("view.log.live")).onClick(() => void this.plugin.activateActivityView()));
     heading.addButton((b) =>
       b
         .setButtonText(t("view.log.clear"))
@@ -709,6 +710,7 @@ const HOW_TO = [
   ["view.howto.groups", "view.howto.groupsDesc"],
   ["view.howto.download", "view.howto.downloadDesc"],
   ["view.howto.logs", "view.howto.logsDesc"],
+  ["view.howto.activity", "view.howto.activityDesc"],
   ["view.howto.settings", "view.howto.settingsDesc"],
 ] as const;
 

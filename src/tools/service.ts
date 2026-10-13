@@ -1,5 +1,6 @@
 // Runs vault tools and exposes them (plus the management tools) to the MCP server and the REST API.
 
+import { ActivityTrace } from "../activity/activityLog";
 import { AuditLog } from "../audit/auditLog";
 import { Broker, BrokerSuccess } from "../engine/broker";
 import { RequestInput } from "../engine/prepare";
@@ -148,18 +149,41 @@ export class ToolsService {
     return META_NAMES.has(name) || this.deps.registry.list().some((e) => e.name === name && e.expose);
   }
 
-  async callMcp(name: string, args: Record<string, unknown>, client: ClientContext): Promise<McpCallOutput> {
+  /**
+   * `trace`: the activity session of this call. Without one (the REST endpoint), the call opens and
+   * closes its own.
+   */
+  async callMcp(name: string, args: Record<string, unknown>, client: ClientContext, trace?: ActivityTrace): Promise<McpCallOutput> {
+    const own = trace === undefined;
+    const tr = trace ?? this.deps.broker.activity.begin({ client: client.name, tool: name === "run_vault_tool" && typeof args.name === "string" ? args.name : name, source: "rest" });
+    const out = await this.dispatch(name, args, client, tr);
+    if (own) tr.end(out.isError ? "error" : "ok");
+    return out;
+  }
+
+  private async dispatch(name: string, args: Record<string, unknown>, client: ClientContext, trace: ActivityTrace): Promise<McpCallOutput> {
     try {
       await this.ready();
-      if (name === "get_tool_authoring_guide") return { text: this.deps.guide(), isError: false };
-      if (name === "list_vault_tools") return { value: this.status(), isError: false };
-      if (name === "search_vault_tools") return { value: searchTools(this.deps.registry.list(), await this.endpointIndex(), args), isError: false };
+      if (name === "get_tool_authoring_guide") {
+        trace.line("info", "act.line.toolMeta", { tool: name });
+        return { text: this.deps.guide(), isError: false };
+      }
+      if (name === "list_vault_tools") {
+        trace.line("info", "act.line.toolMeta", { tool: name });
+        return { value: this.status(), isError: false };
+      }
+      if (name === "search_vault_tools") {
+        trace.line("info", "act.line.toolMeta", { tool: name }, previewOf(args));
+        return { value: searchTools(this.deps.registry.list(), await this.endpointIndex(), args), isError: false };
+      }
       if (name === "run_vault_tool") {
         if (typeof args.name !== "string") throw new ToolError("invalid_argument", "name is required.");
-        return { value: await this.run(args.name, args.arguments, client), isError: false };
+        return { value: await this.run(args.name, args.arguments, client, trace), isError: false };
       }
-      return { value: await this.run(name, args, client), isError: false };
+      return { value: await this.run(name, args, client, trace), isError: false };
     } catch (err) {
+      // run() reports its own failures and closes the session; this covers what fails before it.
+      if (!trace.ended) trace.line("error", "act.line.toolFailed", { message: err instanceof Error ? err.message : String(err) });
       return { value: errorValue(err), isError: true };
     }
   }
@@ -197,30 +221,32 @@ export class ToolsService {
   }
 
   /** Runs a tool. Throws ToolError with a message the AI can act on. */
-  async run(name: string, rawArgs: unknown, client: ClientContext): Promise<unknown> {
+  async run(name: string, rawArgs: unknown, client: ClientContext, trace?: ActivityTrace): Promise<unknown> {
+    const tr = trace ?? this.deps.broker.activity.begin({ client: client.name, tool: name, source: "rest" });
     if (!this.enabled()) throw new ToolError("tools_disabled", "Vault tools are turned off. The user can turn them on in Obsidian: Settings > Environment Keys > Vault tools.");
     const entry = this.deps.registry.get(name);
     if (!entry) throw new ToolError("unknown_tool", `There is no vault tool named "${name}". Call list_vault_tools to see the available tools.`);
+    // The AI called run_vault_tool(name): the session shows the tool that really ran.
+    tr.setTool(entry.name, tr.session.tool !== entry.name ? tr.session.tool : undefined);
+    tr.line("step", "act.line.toolReceived", { tool: entry.name, kind: entry.kind ?? "?", note: entry.notePath }, previewOf(rawArgs));
     try {
-      const result = await this.execute(entry, rawArgs, client);
+      const result = await this.execute(entry, rawArgs, client, tr);
       this.deps.audit.add({ client: client.name, action: "tool", tool: entry.name, target: entry.notePath, secrets: [], outcome: "ok" });
+      tr.line("ok", "act.line.toolResult", undefined, previewOf(result));
+      tr.end("ok");
       return result;
     } catch (err) {
       const code = err instanceof ToolError ? err.code : "script_error";
-      this.deps.audit.add({
-        client: client.name,
-        action: "tool",
-        tool: entry.name,
-        target: entry.notePath,
-        secrets: [],
-        outcome: code === "denied" ? "denied" : code === "request_failed" ? "blocked" : "error",
-        detail: err instanceof Error ? err.message : String(err),
-      });
+      const outcome = code === "denied" ? "denied" : code === "request_failed" ? "blocked" : "error";
+      const message = err instanceof Error ? err.message : String(err);
+      this.deps.audit.add({ client: client.name, action: "tool", tool: entry.name, target: entry.notePath, secrets: [], outcome, detail: message });
+      tr.line("error", "act.line.toolFailed", { message });
+      tr.end(outcome);
       throw err;
     }
   }
 
-  private async execute(entry: ToolEntry, rawArgs: unknown, client: ClientContext): Promise<unknown> {
+  private async execute(entry: ToolEntry, rawArgs: unknown, client: ClientContext, trace: ActivityTrace): Promise<unknown> {
     if (entry.status === "invalid") throw new ToolError("invalid_tool", `Tool "${entry.name}" in ${entry.notePath} has problems: ${entry.problems.join(" ")}`);
     if (entry.status === "scripts-disabled") throw new ToolError("scripts_disabled", "Script tools are turned off. The user can turn them on in Obsidian: Settings > Environment Keys > Vault tools.");
     const checked = validateArgs(entry.params, rawArgs);
@@ -228,12 +254,15 @@ export class ToolsService {
 
     // Generic tools get the service note of the instance chosen in the call; others their fixed one.
     const service = this.serviceFor(entry, checked.args);
+    if (service) trace.line("info", "act.line.toolService", { service });
 
     if (entry.kind === "request") {
       const note = this.resolveNote(entry.request!, entry.notePath, "Request note");
-      const res = await this.runRequestNote(note, checked.args, service, entry.notePath, client);
+      trace.line("step", "act.line.toolRequestNote", { note: note.path });
+      const res = await this.runRequestNote(note, checked.args, service, entry.notePath, client, trace);
       return compact(res);
     }
+    trace.line("step", "act.line.toolScript");
 
     // kind: script. Permission to run it is asked by the AI client, like for any other MCP tool.
     const tool = entry;
@@ -246,7 +275,7 @@ export class ToolsService {
       service: serviceNote ? summary(serviceNote) : null,
       timeoutMs: s.scriptTimeoutSeconds * 1000,
       maxOutputBytes: s.maxResponseMB * 1024 * 1024,
-      bridge: (method, params) => this.bridge(method, params, tool, client, service),
+      bridge: (method, params) => this.bridge(method, params, tool, client, trace, service),
     });
   }
 
@@ -263,8 +292,9 @@ export class ToolsService {
   }
 
   /** The ctx API of scripts. Every request goes through the broker as the calling client. */
-  private async bridge(method: string, params: unknown, tool: ToolEntry, client: ClientContext, defaultService?: string): Promise<unknown> {
+  private async bridge(method: string, params: unknown, tool: ToolEntry, client: ClientContext, trace: ActivityTrace, defaultService?: string): Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
+    trace.line("info", "act.line.scriptCall", { call: `ctx.${method}` });
     switch (method) {
       case "notes.get": {
         if (typeof p.ref !== "string") throw new Error("ctx.notes.get(ref) needs a note name or [[link]].");
@@ -290,7 +320,7 @@ export class ToolsService {
         const note = this.resolveNote(p.note, tool.notePath, "Request note");
         // Without options.service, a script uses the instance of the call (generic tools) or the tool's service.
         const service = typeof options.service === "string" ? options.service : defaultService;
-        return this.runRequestNote(note, args as Record<string, unknown>, service, tool.notePath, client);
+        return this.runRequestNote(note, args as Record<string, unknown>, service, tool.notePath, client, trace);
       }
       case "http": {
         const req = p as { method?: unknown; url?: unknown; headers?: unknown; body?: unknown };
@@ -301,14 +331,14 @@ export class ToolsService {
           if (!Object.keys(headers).some((k) => k.toLowerCase() === "content-type")) headers["Content-Type"] = "application/json";
         }
         const input: RequestInput = { method: typeof req.method === "string" ? req.method : undefined, url: typeof req.url === "string" ? req.url : "", headers, body: body as string | undefined };
-        return this.send(input, client);
+        return this.send(input, client, [], trace);
       }
       default:
         throw new Error(`Unknown ctx method ${method}.`);
     }
   }
 
-  private async runRequestNote(note: VaultNote, params: Record<string, unknown>, serviceOverride: string | undefined, fromPath: string, client: ClientContext) {
+  private async runRequestNote(note: VaultNote, params: Record<string, unknown>, serviceOverride: string | undefined, fromPath: string, client: ClientContext, trace: ActivityTrace) {
     const tpl = parseRequestBlock(await this.deps.source.read(note), note.name);
     const serviceRef = serviceOverride ?? (typeof note.frontmatter.service === "string" ? note.frontmatter.service : undefined);
     // A service override from a tool is relative to the tool note; the request's own link to the request note.
@@ -316,11 +346,11 @@ export class ToolsService {
     const input = resolveRequest(tpl, { params, service, noteName: note.name });
     // Secrets of the service note are masked in the response even when this request does not send
     // them (e.g. reading an automation rule that stores an injected token).
-    return this.send(input, client, service ? servicePlaceholderNames(service.frontmatter) : []);
+    return this.send(input, client, service ? servicePlaceholderNames(service.frontmatter) : [], trace);
   }
 
-  private async send(input: RequestInput, client: ClientContext, alsoRedact: string[] = []) {
-    const res = await this.deps.broker.execute(input, client, { fromVaultTool: true, alsoRedact });
+  private async send(input: RequestInput, client: ClientContext, alsoRedact: string[], trace: ActivityTrace) {
+    const res = await this.deps.broker.execute(input, client, { fromVaultTool: true, alsoRedact, trace });
     if (!res.ok) throw new ToolError("request_failed", `${res.error.code}: ${res.error.message}`);
     return responseOf(res);
   }
@@ -422,4 +452,13 @@ function compact(res: ToolHttpResponse): Omit<ToolHttpResponse, "headers"> & { h
 function errorValue(err: unknown): { ok: false; error: { code: string; message: string } } {
   if (err instanceof ToolError) return { ok: false, error: { code: err.code, message: err.message } };
   return { ok: false, error: { code: "internal_error", message: err instanceof Error ? err.message : String(err) } };
+}
+
+/** JSON of a value for an activity line. The activity log masks and cuts it. */
+function previewOf(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? "";
+  } catch {
+    return "";
+  }
 }
