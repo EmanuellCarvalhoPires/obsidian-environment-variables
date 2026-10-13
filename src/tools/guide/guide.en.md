@@ -93,11 +93,42 @@ Rules of the ```` ```http ```` block:
 - 1st line: `METHOD URL` (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS). The URL must be absolute (`https://...`) once filled.
 - Then one header per line as `Name: value`.
 - A blank line and, if any, the body.
-- `{{service.<property>}}`: the property's value in the service note **of the instance chosen in the call**, inserted as is. It may contain secret placeholders. Never write an instance's URL, ID or secret in the request.
+- `{{service.<property>}}`: the property's value in the service note **of the instance chosen in the call**, inserted as is. It may contain secret placeholders. Nested properties use dots: `{{service.automation_web_auth.bitbucket}}`. The final value must be text or a number. Never write an instance's URL, ID or secret in the request.
 - `{{param:<name>}}`: an argument of the call. In the URL the value is encoded. In a JSON body, text goes **inside quotes** (`"{{param:title}}"`) and numbers, booleans, objects and arrays go **without quotes** (`{{param:limit}}`).
 - An optional parameter that was not given and is the whole value of a query pair (`?fields={{param:fields}}`) removes the pair from the URL. Anywhere else, a missing parameter is an error.
 - Secret placeholders only work in **headers**, unless the secret allows the URL or the body. The URL host can never come from a secret placeholder.
-- Arguments from the AI may never contain secret placeholders: the plugin refuses them.
+- Arguments from the AI may never contain secret placeholders: the plugin refuses them. To put a secret inside a body sent by the AI, use `inject_service` (section 4.2.1).
+
+#### 4.2.1 Secrets inside a body sent by the AI (`inject_service`)
+
+Some APIs store a token inside the JSON you send: for example, an automation rule (Jira/Confluence Automation) whose web request action calls another API with an `Authorization` header. For this:
+
+1. In the service note, declare a map with the values that may be injected:
+
+   ```yaml
+   automation_web_auth:
+     bitbucket: "{{basic:BITBUCKET_APP}}"
+     github: "{{bearer:GITHUB_PAT}}"
+   ```
+
+2. In the request body, add the `|inject_service:<map>` modifier to the parameter:
+
+   ```http
+   PUT {{service.url}}/gateway/api/automation/.../rule/{{param:rule_id}}
+   Authorization: {{service.auth}}
+   Content-Type: application/json
+
+   {{param:rule|inject_service:automation_web_auth}}
+   ```
+
+3. In the call, the AI writes the marker `{{inject:<key>}}` where the secret goes, e.g. `{ "name": "Authorization", "value": "{{inject:bitbucket}}" }`. The plugin replaces each marker with the key's value in the map before sending.
+
+Rules:
+
+- Only keys declared in the service note's map can be injected: the AI picks the key, never the secret. An unknown key, a malformed marker, a marker in a field name or a marker in a parameter without `inject_service` is an error.
+- `inject_service` only works in the body, never in the URL or headers.
+- The injected secret goes to the request's host (e.g. the automation API, which stores it in the rule). So it must **allow the body** and have **that host** in its allowed hosts. Otherwise the plugin blocks the call (`placement_not_allowed` or `host_not_allowed`).
+- Every secret named in the service note is masked (`***`) in the responses of requests that use that note, even when the request does not send it (e.g. when reading the rule back). So, when updating a rule you read before, replace the `***` with the `{{inject:<key>}}` marker instead of sending `***` back.
 
 ### 4.3 Tool note, `kind: request` (tool tag)
 
