@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 let obsidianLanguage = "en";
@@ -54,5 +55,41 @@ describe("How to use", () => {
     setLanguage("pt-BR");
     expect(t("view.howto.toolsDesc", { toolTag: "x", requestTag: "y" })).not.toContain("tag de ferramenta");
     setLanguage("en");
+  });
+});
+
+describe("live activity texts", () => {
+  /** The keys of one table in src/i18n.ts, read from the source: the tables are not exported. */
+  function keysOf(table: "en" | "ptBR"): string[] {
+    const source = readFileSync(new URL("../src/i18n.ts", import.meta.url), "utf8");
+    const start = source.indexOf(table === "en" ? "const en = {" : "const ptBR: Partial<Record<Key, string>> = {");
+    const end = source.indexOf("\n};", start);
+    return [...source.slice(start, end).matchAll(/^ {2}"((?:act\.line|view\.act|cmd\.openActivity|view\.log\.live|view\.howto\.activity)[\w.]*)":/gm)].map((m) => m[1]);
+  }
+
+  it("has every activity text in both languages", () => {
+    const en = keysOf("en");
+    expect(en.length).toBeGreaterThan(60);
+    expect(keysOf("ptBR").sort()).toEqual(en.sort());
+  });
+
+  it("keeps the same variables in both languages", () => {
+    const vars = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+    for (const key of keysOf("en")) {
+      setLanguage("en");
+      const en = t(key as never, {});
+      setLanguage("pt-BR");
+      const pt = t(key as never, {});
+      expect(vars(pt), key).toEqual(vars(en));
+    }
+    setLanguage("en");
+  });
+
+  it("shows the terminal lines in the chosen language", () => {
+    setLanguage("pt-BR");
+    expect(t("act.line.substituted", { where: "header Authorization", raw: "{{basic:A}}", mask: "Basic ********" })).toBe("header Authorization: {{basic:A}}  ->  Basic ********");
+    expect(t("act.line.approvalWaiting")).toContain("aprovação");
+    setLanguage("en");
+    expect(t("act.line.approvalWaiting")).toContain("approval");
   });
 });
