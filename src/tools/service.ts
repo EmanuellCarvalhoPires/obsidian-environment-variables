@@ -423,11 +423,16 @@ export interface ToolHttpResponse {
   headers: Record<string, string>;
   json?: unknown;
   body?: string;
+  /** An image body, in base64. */
+  bodyBase64?: string;
   truncated: boolean;
 }
 
 function responseOf(res: BrokerSuccess): ToolHttpResponse {
   const contentType = res.headers["content-type"] ?? "";
+  if (res.bodyEncoding === "base64") {
+    return { status: res.status, statusText: res.statusText, ok: res.status >= 200 && res.status < 300, headers: res.headers, bodyBase64: res.body, truncated: res.truncated };
+  }
   let json: unknown;
   if (/json/i.test(contentType) || /^\s*[[{]/.test(res.body)) {
     try {
