@@ -21,16 +21,28 @@ export interface TransportResponse {
   statusText: string;
   headers: Record<string, string>;
   body: string;
-  bodyEncoding: "text" | "omitted";
+  bodyEncoding: BodyEncoding;
   bodyBytes: number;
   truncated: boolean;
   finalUrl: string;
   redirects: number;
 }
 
+/** "base64": an image, its bytes in base64. "omitted": any other binary body, left out. */
+export type BodyEncoding = "text" | "base64" | "omitted";
+
 export type Transport = (req: TransportRequest) => Promise<TransportResponse>;
 
-const TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded|graphql|problem\+json|[\w.+-]*\+json|[\w.+-]*\+xml))/i;
+/** Bodies returned as text: text/*, the common application types and any "+json" or "+xml" type, such as image/svg+xml. */
+const TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded|graphql)|[\w.-]+\/[\w.+-]*\+(json|xml)\b)/i;
+
+/** Binary bodies returned in base64: images (PNG icons, charts). The broker drops them if a secret is in the bytes. */
+const BASE64_TYPES = /^image\//i;
+
+function encodingOf(contentType: string): BodyEncoding {
+  if (contentType === "" || TEXT_TYPES.test(contentType)) return "text";
+  return BASE64_TYPES.test(contentType) ? "base64" : "omitted";
+}
 
 /**
  * Node http/https transport with manual redirects. A redirect is followed only when
@@ -116,13 +128,13 @@ function sendOnce(
         }
         const contentType = flat["content-type"] ?? "";
         const buffer = Buffer.concat(chunks);
-        const isText = contentType === "" || TEXT_TYPES.test(contentType);
+        const bodyEncoding = encodingOf(contentType);
         resolve({
           status: res.statusCode ?? 0,
           statusText: res.statusMessage ?? "",
           headers: flat,
-          body: isText ? buffer.toString("utf8") : "",
-          bodyEncoding: isText ? "text" : "omitted",
+          body: bodyEncoding === "text" ? buffer.toString("utf8") : bodyEncoding === "base64" ? buffer.toString("base64") : "",
+          bodyEncoding,
           bodyBytes: size,
           truncated,
         });
