@@ -56,6 +56,7 @@ const TOOLS = [
       "Send an HTTP request. Placeholders {{secret:NAME}}, {{secret:NAME.user}}, {{basic:NAME}} (Basic auth from username + token) and {{bearer:NAME}} are replaced with real values right before sending. " +
       "By default placeholders are only accepted in header values, and only for the hosts allowed for that key (a key marked allowAnyHost works with any https host, but the user must approve every request). " +
       "Example header: {\"Authorization\": \"{{basic:JIRA_ACME}}\"}. Values found in the response are masked as ***. " +
+      "Text bodies (text/*, JSON, XML, SVG) come as text; images come in base64 (bodyEncoding \"base64\"), unless a secret is in their bytes; other binary bodies are omitted. " +
       "When vault tools are on, this is the last resort: first call search_vault_tools and use the vault tool that covers the endpoint, if there is one.",
     inputSchema: {
       type: "object",

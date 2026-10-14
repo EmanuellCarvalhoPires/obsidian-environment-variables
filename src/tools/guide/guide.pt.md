@@ -236,7 +236,7 @@ O bloco ```` ```js ```` precisa exportar a função: `export default async funct
 | `await ctx.notes.query({ tag, name, limit })` | Notas com a tag (e subtags), sem o body. |
 | `ctx.log(...)` | Mensagem de depuração. |
 
-As requisições devolvem `{ status, statusText, ok, headers, json | body, truncated }`, com qualquer segredo já mascarado como `***`.
+As requisições devolvem `{ status, statusText, ok, headers, json | body | bodyBase64, truncated }`, com qualquer segredo já mascarado como `***`. `bodyBase64` traz uma imagem (`image/*`; o SVG vem como texto em `body`); se um segredo estiver nos bytes, o corpo não é devolvido. Outros corpos binários ficam de fora.
 
 Limites: o script roda num interpretador JavaScript isolado (QuickJS, em WebAssembly). Não há `fetch`, `import`, `require`, `setTimeout`, DOM nem acesso à rede fora do `ctx`; `console.log` funciona como `ctx.log`. Scripts têm um tempo máximo de execução (30 s por padrão, ajustável nas configurações; o tempo esperando requisições e aprovações não conta) e um limite de memória de 64 MB. Um erro de requisição não interrompe o script: confira `ok` e `status`. Os erros de configuração (nota não encontrada, parâmetro faltando, host não permitido) viram exceções com mensagens explicativas.
 

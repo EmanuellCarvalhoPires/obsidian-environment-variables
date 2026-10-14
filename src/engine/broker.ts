@@ -6,7 +6,7 @@ import { SecretMetadata, toMetadata } from "../store/types";
 import { findPlaceholders, PlaceholderError, PlaceholderMatch } from "./placeholders";
 import { PolicyError, prepareRequest, PreparedRequest, RequestInput } from "./prepare";
 import { createRedactor, Redactor } from "./redact";
-import { Transport } from "./transport";
+import { BodyEncoding, Transport } from "./transport";
 
 export interface BrokerLimits {
   timeoutMs: number;
@@ -35,7 +35,7 @@ export interface BrokerSuccess {
   statusText: string;
   headers: Record<string, string>;
   body: string;
-  bodyEncoding: "text" | "omitted";
+  bodyEncoding: BodyEncoding;
   bodyBytes: number;
   truncated: boolean;
   finalUrl: string;
@@ -207,13 +207,17 @@ export class Broker {
       };
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(res.headers)) headers[k] = clean(v);
-      const body = clean(res.body);
+      // A base64 body cannot be masked in place: if a secret is in its bytes, it is not returned at all.
+      const secretInBytes = res.bodyEncoding === "base64" && hasSecretInBytes(res.body, redactor);
+      if (secretInBytes) redactions++;
+      const bodyEncoding: BodyEncoding = secretInBytes ? "omitted" : res.bodyEncoding;
+      const body = secretInBytes ? "" : res.bodyEncoding === "base64" ? res.body : clean(res.body);
       const finalUrl = clean(res.finalUrl);
       const statusText = clean(res.statusText);
       await this.store.markUsed(names);
       this.audit.add({ client: who, action: "request", secrets: names, method: prepared.method, target, status: res.status, outcome: "ok", redactions });
-      logResponse(trace, res.status, statusText, res.bodyBytes, res.truncated, headers, body, res.bodyEncoding, redactions);
-      return { ok: true, status: res.status, statusText, headers, body, bodyEncoding: res.bodyEncoding, bodyBytes: res.bodyBytes, truncated: res.truncated, finalUrl, redactions };
+      logResponse(trace, res.status, statusText, res.bodyBytes, res.truncated, headers, body, bodyEncoding, redactions, secretInBytes);
+      return { ok: true, status: res.status, statusText, headers, body, bodyEncoding, bodyBytes: res.bodyBytes, truncated: res.truncated, finalUrl, redactions };
     } catch (err) {
       // Network errors can echo the request (URL, headers): mask before logging or returning.
       const message = redactor.redact(err instanceof Error ? err.message : String(err)).text;
@@ -222,6 +226,12 @@ export class Broker {
       return fail("upstream_error", message);
     }
   }
+}
+
+/** Whether a stored value (or one of its encodings) is in the bytes of a base64 body, read as Latin-1 and as UTF-8. */
+function hasSecretInBytes(base64: string, redactor: Redactor): boolean {
+  const bytes = Buffer.from(base64, "base64");
+  return redactor.redact(bytes.toString("latin1")).count > 0 || redactor.redact(bytes.toString("utf8")).count > 0;
 }
 
 function fail(code: BrokerErrorCode, message: string): BrokerFailure {
@@ -325,15 +335,18 @@ function logResponse(
   truncated: boolean,
   headers: Record<string, string>,
   body: string,
-  bodyEncoding: "text" | "omitted",
+  bodyEncoding: BodyEncoding,
   redactions: number,
+  secretInBytes: boolean,
 ): void {
   trace.line(status < 400 ? "ok" : "warn", "act.line.responseReceived", { status, statusText, bytes });
   if (truncated) trace.line("warn", "act.line.responseTruncated");
   const rows = Object.entries(headers).map(([k, v]) => `${k}: ${v}`);
   if (rows.length > 0) trace.line("info", "act.line.responseHeaders", { n: rows.length }, rows.join("\n"));
   trace.line(redactions > 0 ? "warn" : "info", redactions > 0 ? "act.line.masked" : "act.line.maskedNone", { n: redactions });
-  if (bodyEncoding === "omitted") trace.line("info", "act.line.bodyOmitted");
+  if (secretInBytes) trace.line("warn", "act.line.bodySecretInBytes");
+  else if (bodyEncoding === "omitted") trace.line("info", "act.line.bodyOmitted");
+  else if (bodyEncoding === "base64") trace.line("info", "act.line.bodyBase64", { bytes });
   else if (body !== "") trace.line("info", "act.line.responseBody", { bytes }, body);
 }
 
