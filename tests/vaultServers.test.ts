@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as net from "net";
 import { AuditLog } from "../src/audit/auditLog";
-import { Broker } from "../src/engine/broker";
-import { nodeTransport } from "../src/engine/transport";
+import { Broker } from "../src/secrets/broker";
+import { nodeTransport } from "../src/secrets/transport";
 import { contextOf, createClient, findClient } from "../src/server/clients";
 import { LocalServer, PortInUseError, probePort } from "../src/server/localServer";
 import { unlockedStore } from "./helpers";

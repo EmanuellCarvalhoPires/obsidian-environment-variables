@@ -8,9 +8,9 @@ The same prompt works from scratch or to complete an environment that already ex
 
 Follow this order. Steps marked **user** are done by the user in Obsidian: explain where to click and wait for them to confirm.
 
-1. **Plugin installed and on (user).** Obsidian → Settings → Community plugins → Environment Keys on. The secret vault must be created and unlocked (Environment Keys panel, key icon in the sidebar).
-2. **AI client connected (user).** In the plugin's panel → AI clients → **Connect** on their client (Claude Code, Codex, Cursor...). This turns on the local server and registers the MCP server in the client, with no token to copy. Then the client must be reloaded. If the client is not listed, use "Other client (manual setup)".
-3. **Right server.** Find the plugin's MCP server among your tools (rule 2 of the guide). If there is more than one, ask which vault it is. Call `list_secrets` and, if it exists, `list_vault_tools`.
+1. **Plugins installed and on (user).** Obsidian → Settings → Community plugins → **AI Ecosystem** and **Environment Keys** on (if AI Ecosystem is not installed yet, the "Install and enable AI Ecosystem" button at the top of the Environment Keys panel does it in 1 click; until then, the plugin runs in Transition Mode). The secret vault must be created and unlocked (Environment Keys panel, key icon in the sidebar).
+2. **AI client connected (user).** In the AI Ecosystem panel (or under AI clients in the Environment Keys panel) → **Connect** on their client (Claude Code, Codex, Cursor...). This registers the vault's unified MCP server in the client, with no token to copy. Then the client must be reloaded. If the client is not listed, use "Other client (manual setup)".
+3. **Right server.** Find the vault's MCP server among your tools (rule 2 of the guide). If there is more than one, ask which vault it is. Call `list_secrets` and, if it exists, `list_vault_tools`.
 4. **Vault tools on (user).** If `list_vault_tools` does not exist, or reports `enabled: false`, ask the user to turn them on in Settings → Environment Keys → Vault tools. Script tools are only needed if the plan uses `kind: script` (catalog packages may have some: check their `kind` in `list_vault_tools` after downloading).
 5. **Vault conventions.** Read the instruction files (`CLAUDE.md`, `AGENTS.md`), the index notes (MOCs), the tag taxonomy and properties such as `up:`, and follow those conventions in the notes you create.
 6. **Mandatory question.** Ask the question at the end of this prompt and wait for the answer.

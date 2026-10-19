@@ -1,21 +1,40 @@
 import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon } from "obsidian";
-import { ActivityLog } from "./activity/activityLog";
 import { AuditLog } from "./audit/auditLog";
-import { Broker } from "./engine/broker";
-import { detectToken } from "./engine/tokenPatterns";
-import { nodeTransport } from "./engine/transport";
+import { installAndEnableEcosystem } from "./ecosystem/installEcosystem";
+import {
+  AIEcosystemAPI,
+  EcosystemClientContext,
+  EcosystemConnector,
+  getEcosystemPlugin,
+  HubPrompt,
+  HubRequest,
+  HubResponse,
+  HubRoute,
+  HubTool,
+  isEcosystemEnabled,
+  listEcosystemServiceNames,
+  MODULE_ID,
+  ModuleRegistration,
+  SUPPORTED_API_VERSION,
+} from "./ecosystem/moduleConnector";
+import { clearProperties, decorateProperties } from "./editor/properties";
 import { placeholderExtension, renderPlaceholders } from "./editor/render";
 import { attachPropertySuggest, SecretNameSuggest, setPropertySuggestActive } from "./editor/suggest";
-import { clearProperties, decorateProperties } from "./editor/properties";
 import { currentLanguage, setLanguage, t } from "./i18n";
 import { Integration, IntegrationId, integrationById, MCP_SERVER_NAME } from "./integrations/integrations";
+import { Broker, BrokerActivityEvent } from "./secrets/broker";
+import { SecretAdoptionCoordinator } from "./secrets/secretAdoption";
+import { createSecretVaultService, SecretVaultService } from "./secrets/secretVaultService";
+import { detectToken } from "./secrets/tokenPatterns";
+import { nodeTransport } from "./secrets/transport";
 import { accessOf, ClientAccess, ClientContext, ClientRecord, contextOf, createClient, findClient } from "./server/clients";
-import { LocalServer, PortInUseError, PortOwner, probePort } from "./server/localServer";
+import { LocalServer, PortInUseError, PortOwner, probePort, statusFor } from "./server/localServer";
+import { buildMcpInstructions, BUILT_IN_TOOLS, executeMcpToolCall, PROMPTS } from "./server/mcp";
 import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIdentity";
 import { LanguageSetting, NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
+import { HttpGithubReader } from "./tools/githubReader";
 import { buildGuide } from "./tools/guide";
-import { serviceTemplateFor, templatesToCreate, templateText } from "./tools/serviceTemplates";
 import {
   appForEntry,
   fetchCatalog,
@@ -29,13 +48,12 @@ import {
   serviceTemplateFileName,
 } from "./tools/mcpCatalog";
 import { computeMcpGroupStats, matchedNotePaths, McpAppConfig, McpGroupConfig, McpGroupStats, randomGroupId } from "./tools/mcpGroups";
-import { HttpGithubReader } from "./tools/githubReader";
 import { ObsidianNoteSource } from "./tools/obsidianSource";
 import { ToolRegistry } from "./tools/registry";
-import { NoteSource } from "./tools/types";
 import { ScriptRunner } from "./tools/scriptRunner";
 import { ToolsService } from "./tools/service";
-import { ACTIVITY_VIEW_TYPE, ActivityView } from "./ui/activityView";
+import { serviceTemplateFor, templatesToCreate, templateText } from "./tools/serviceTemplates";
+import { NoteSource } from "./tools/types";
 import { defaultLogoFor } from "./ui/defaultLogos";
 import { ApprovalModal, referenceFor, SecretModal, SecretPickerModal } from "./ui/modals";
 import { EnvironmentVariablesSettingTab } from "./ui/settingsTab";
@@ -51,9 +69,10 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   data!: PluginData;
   store!: SecretStore;
   audit!: AuditLog;
-  /** Live terminal of what the AI clients do. In memory only. */
-  activity!: ActivityLog;
   broker!: Broker;
+  secretService!: SecretVaultService;
+  adoption!: SecretAdoptionCoordinator;
+  connector!: EcosystemConnector;
   server: LocalServer | null = null;
   registry!: ToolRegistry;
   tools!: ToolsService;
@@ -69,6 +88,9 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   private propertyTimer: number | undefined;
   private propertyDocs = new Set<Document>();
   private toolScanTimer: number | undefined;
+  private disposeSecretService: (() => void) | undefined;
+  private disposeServiceListener: (() => void) | undefined;
+  private transitionNoticeShown = false;
   /** This vault's identity: its server, port and MCP server name are its own. */
   vaultId = "";
   vaultName = "";
@@ -77,6 +99,14 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
   get vaultFilePath(): string {
     return `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/vault.enc`;
+  }
+
+  get isEcosystemConnected(): boolean {
+    return this.connector?.status === "connected" && Boolean(this.connector.api);
+  }
+
+  get ecosystemPort(): number {
+    return this.connector?.api?.getServerStatus().port ?? this.data.settings.port;
   }
 
   async onload(): Promise<void> {
@@ -98,20 +128,53 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       this.data.audit = entries;
       this.scheduleSave();
     });
-    this.activity = new ActivityLog();
+
+    const limits = () => ({
+      timeoutMs: this.data.settings.timeoutSeconds * 1000,
+      maxResponseBytes: this.data.settings.maxResponseMB * 1024 * 1024,
+      maxRedirects: 5,
+    });
+    const forwardActivity = (evt: BrokerActivityEvent, kind: "http" | "service") => {
+      this.connector?.api?.logActivity({
+        kind,
+        method: evt.method ?? "GET",
+        target: evt.target,
+        moduleId: MODULE_ID,
+        client: evt.client,
+        status: evt.status ?? 0,
+        durationMs: evt.durationMs ?? 0,
+        payload: evt.payload,
+        response: evt.response,
+      });
+    };
+
     this.broker = new Broker(
       this.store,
       nodeTransport,
       (req) => this.askApproval(req),
       this.audit,
-      () => ({
-        timeoutMs: this.data.settings.timeoutSeconds * 1000,
-        maxResponseBytes: this.data.settings.maxResponseMB * 1024 * 1024,
-        maxRedirects: 5,
-      }),
+      limits,
       () => this.touch(),
-      this.activity,
+      (evt) => forwardActivity(evt, "http"),
     );
+
+    this.secretService = createSecretVaultService({
+      store: this.store,
+      transport: nodeTransport,
+      audit: this.audit,
+      limits,
+      onSecretsUsed: () => this.touch(),
+      onActivity: (evt) => forwardActivity(evt, "service"),
+    });
+
+    this.adoption = new SecretAdoptionCoordinator({
+      service: this.secretService,
+      audit: this.audit,
+      isUnlocked: () => this.store.isUnlocked,
+      onAdopted: (evt) => {
+        new Notice(t("notice.secretAdopted", { module: evt.ownerModuleId, placeholder: evt.placeholder }), 8_000);
+      },
+    });
 
     // Vault tools: MCP tools defined by notes, found by tag.
     const source = new ObsidianNoteSource(this.app);
@@ -130,6 +193,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       settings: () => ({ ...s() }),
       guide: () => this.agentGuide(),
     });
+    this.register(this.registry.onChange(() => this.syncEcosystemTools()));
     // Only tool notes and instance notes are read again; the registry ignores every other note.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteEvent(() => this.registry.noteChanged(file.path))));
     this.registerEvent(this.app.vault.on("delete", (file) => this.onNoteEvent(() => this.registry.noteDeleted(file.path))));
@@ -139,19 +203,24 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     });
 
     this.registerView(VIEW_TYPE, (leaf) => new EnvironmentVariablesView(leaf, this));
-    this.registerView(ACTIVITY_VIEW_TYPE, (leaf) => new ActivityView(leaf, this));
 
     // Left ribbon icon: key when unlocked, lock when locked.
     this.ribbon = this.addRibbonIcon(ICON_LOCKED, t("ribbon.locked"), () => void this.activateView());
     this.ribbon.addClass("ev-ribbon");
     this.register(this.store.onChange(() => this.updateRibbon()));
     this.register(this.store.onChange(() => this.syncNameIndex()));
+    this.register(
+      this.store.onChange(() => {
+        if (this.store.isUnlocked && this.connector?.api) {
+          void this.adoption.scanAll(this.connector.api, listEcosystemServiceNames(this.app));
+        }
+      }),
+    );
     // Editor chips turn red or back when names change (unlock, lock, add, remove).
     this.register(this.store.onChange(() => this.app.workspace.updateOptions()));
     this.updateRibbon();
 
     this.addCommand({ id: "open-panel", name: t("cmd.open"), callback: () => void this.activateView() });
-    this.addCommand({ id: "open-activity", name: t("cmd.openActivity"), callback: () => void this.activateActivityView() });
     this.addCommand({ id: "lock", name: t("cmd.lock"), callback: () => this.lock() });
     this.addCommand({
       id: "insert-reference",
@@ -211,14 +280,35 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
     this.registerInterval(window.setInterval(() => this.checkAutoLock(), 30_000));
 
+    this.connector = new EcosystemConnector({
+      app: this.app,
+      registration: () => this.buildModuleRegistration(),
+      onBeforeConnect: async () => {
+        if (this.server) {
+          await this.stopServer();
+        }
+      },
+      onConnected: (api) => void this.handleEcosystemConnected(api),
+      onDisconnected: () => this.handleEcosystemDisconnected(),
+      onMissing: () => void this.handleEcosystemMissing(),
+    });
+    this.connector.start();
+
     this.app.workspace.onLayoutReady(() => {
-      if (this.data.settings.serverEnabled) void this.startServer();
       this.scheduleToolScan();
       void this.createServiceTemplates();
+      if (!this.isEcosystemConnected && !isEcosystemEnabled(this.app) && this.data.settings.serverEnabled) {
+        void this.startTransitionServer();
+      }
     });
   }
 
   onunload(): void {
+    this.disposeServiceListener?.();
+    this.disposeServiceListener = undefined;
+    this.disposeSecretService?.();
+    this.disposeSecretService = undefined;
+    this.connector?.stop();
     void this.server?.stop();
     this.server = null;
     this.store.lock();
@@ -239,16 +329,17 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
 
-  /** The live activity panel, in its own tab so it can sit next to the notes while an AI client works. */
-  async activateActivityView(): Promise<void> {
-    const existing = this.app.workspace.getLeavesOfType(ACTIVITY_VIEW_TYPE);
-    if (existing.length > 0) {
-      await this.app.workspace.revealLeaf(existing[0]);
-      return;
+  /** Opens the AI Ecosystem Live Request Inspector when connected. */
+  async openEcosystemInspector(): Promise<void> {
+    const eco = getEcosystemPlugin(this.app);
+    if (eco && typeof eco.openInspectorView === "function") {
+      await eco.openInspectorView();
     }
-    const leaf = this.app.workspace.getLeaf("tab");
-    await leaf.setViewState({ type: ACTIVITY_VIEW_TYPE, active: true });
-    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /** One-click installer for the AI Ecosystem plugin from Transition Mode. */
+  async installAiEcosystem(): Promise<void> {
+    await installAndEnableEcosystem(this.app);
   }
 
   /** Switches the plugin's language and redraws what is open. Command names follow after a restart. */
@@ -257,6 +348,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     setLanguage(language);
     await this.saveAll();
     this.updateRibbon();
+    this.syncEcosystemTools();
     this.emitServerChange(); // the panel redraws on this event
   }
 
@@ -370,7 +462,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     return new Promise((resolve) => new ApprovalModal(this.app, req, this.data.settings.approvalTimeoutSeconds, resolve).open());
   }
 
-  // ---------- server ----------
+  // ---------- AI Ecosystem & Transition Mode server ----------
 
   onServerChange(listener: () => void): () => void {
     this.serverListeners.add(listener);
@@ -381,14 +473,252 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     for (const l of this.serverListeners) l();
   }
 
+  private resolveHubClient(client: EcosystemClientContext): ClientContext {
+    const found = this.data.clients.find((c) => c.id === client.id || c.name === client.name);
+    if (found) {
+      found.lastUsedAt = new Date().toISOString();
+      this.scheduleSave();
+      return contextOf(found);
+    }
+    return {
+      id: client.id || "ecosystem-client",
+      name: client.name || "AI Ecosystem Client",
+      access: { mode: "all" },
+    };
+  }
+
+  /** Builds the complete ModuleRegistration for AI Ecosystem Provider API (v1). */
+  buildModuleRegistration(): ModuleRegistration {
+    const handleRequestRoute = async (req: HubRequest): Promise<HubResponse> => {
+      const payload = (typeof req.body === "object" && req.body !== null ? req.body : {}) as {
+        method?: string;
+        url?: string;
+        headers?: Record<string, string>;
+        body?: string;
+      };
+      const result = await this.broker.execute(
+        {
+          method: typeof payload.method === "string" ? payload.method : undefined,
+          url: typeof payload.url === "string" ? payload.url : "",
+          headers: payload.headers,
+          body: typeof payload.body === "string" ? payload.body : undefined,
+        },
+        this.resolveHubClient(req.client),
+      );
+      return { status: result.ok ? 200 : statusFor(result.error.code), body: result };
+    };
+
+    const handleSecretsRoute = (req: HubRequest): HubResponse => {
+      const result = this.broker.listSecrets(this.resolveHubClient(req.client));
+      return { status: result.ok ? 200 : 423, body: result };
+    };
+
+    const handleToolsListRoute = async (): Promise<HubResponse> => {
+      if (!this.tools.enabled()) {
+        return { status: 404, body: { ok: false, error: { code: "tools_disabled", message: "Vault tools are turned off in the plugin settings." } } };
+      }
+      await this.tools.ready();
+      return { status: 200, body: { ok: true, ...this.tools.status() } };
+    };
+
+    const handleToolsGuideRoute = (req: HubRequest): HubResponse => {
+      if (!this.tools.enabled()) {
+        return { status: 404, body: { ok: false, error: { code: "tools_disabled", message: "Vault tools are turned off in the plugin settings." } } };
+      }
+      const text = this.agentGuide(req.query.request);
+      return { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8" }, body: text };
+    };
+
+    const handleToolRunRoute = async (req: HubRequest): Promise<HubResponse> => {
+      if (!this.tools.enabled()) {
+        return { status: 404, body: { ok: false, error: { code: "tools_disabled", message: "Vault tools are turned off in the plugin settings." } } };
+      }
+      const name = decodeURIComponent(req.params.name ?? "");
+      const bodyObj = (typeof req.body === "object" && req.body !== null ? req.body : {}) as Record<string, unknown>;
+      const args =
+        typeof bodyObj.arguments === "object" && bodyObj.arguments !== null && !Array.isArray(bodyObj.arguments)
+          ? (bodyObj.arguments as Record<string, unknown>)
+          : bodyObj;
+      const out = await this.tools.callMcp("run_vault_tool", { name, arguments: args }, this.resolveHubClient(req.client));
+      return { status: out.isError ? 400 : 200, body: out.isError ? out.value : { ok: true, result: out.value } };
+    };
+
+    const routes: HubRoute[] = [
+      { method: "POST", path: "/request", description: "Execute an outbound HTTP request with {{secret:NAME}} placeholders", handler: handleRequestRoute },
+      { method: "GET", path: "/secrets", description: "List environment variable names and metadata (no secret values)", handler: handleSecretsRoute },
+      { method: "GET", path: "/tools", description: "List vault tools (#mcp/tool)", handler: handleToolsListRoute },
+      { method: "GET", path: "/tools/guide", description: "Read the vault tool authoring guide", handler: handleToolsGuideRoute },
+      { method: "POST", path: "/tools/:name", description: "Run a vault tool by name", handler: handleToolRunRoute },
+    ];
+
+    const legacyAliases: HubRoute[] = [
+      { method: "POST", path: "/v1/request", description: "Legacy alias for POST /api/v1/environment-variables/request", handler: handleRequestRoute },
+      { method: "GET", path: "/v1/secrets", description: "Legacy alias for GET /api/v1/environment-variables/secrets", handler: handleSecretsRoute },
+      { method: "GET", path: "/v1/tools", description: "Legacy alias for GET /api/v1/environment-variables/tools", handler: handleToolsListRoute },
+      { method: "GET", path: "/v1/tools/guide", description: "Legacy alias for GET /api/v1/environment-variables/tools/guide", handler: handleToolsGuideRoute },
+      { method: "POST", path: "/v1/tools/:name", description: "Legacy alias for POST /api/v1/environment-variables/tools/:name", handler: handleToolRunRoute },
+    ];
+
+    return {
+      id: MODULE_ID,
+      name: "Environment Keys",
+      version: this.manifest.version,
+      apiVersion: SUPPORTED_API_VERSION,
+      routes,
+      legacyAliases,
+      tools: this.buildHubTools(),
+      prompts: this.buildHubPrompts(),
+      instructions: buildMcpInstructions(this.tools.enabled()),
+    };
+  }
+
+  /** Converts current MCP tools (core + vault #mcp/tool notes) into AI Ecosystem HubTool definitions. */
+  buildHubTools(): HubTool[] {
+    const defs = [...BUILT_IN_TOOLS, ...(this.tools.enabled() ? this.tools.mcpTools() : [])];
+    return defs.map((def) => ({
+      name: def.name,
+      title: def.title ?? def.name,
+      description: def.description,
+      inputSchema: def.inputSchema,
+      annotations: def.annotations,
+      handler: async (args, ctx) => {
+        const res = await executeMcpToolCall(def.name, args, {
+          broker: this.broker,
+          client: this.resolveHubClient(ctx.client),
+          tools: this.tools,
+        });
+        return {
+          content: res.content,
+          isError: res.isError,
+        };
+      },
+    }));
+  }
+
+  /** Converts MCP prompts (`configure_vault_tools`) into AI Ecosystem HubPrompt definitions. */
+  buildHubPrompts(): HubPrompt[] {
+    if (!this.tools.enabled()) return [];
+    return PROMPTS.map((def) => ({
+      name: def.name,
+      title: def.title,
+      description: def.description,
+      arguments: def.arguments,
+      handler: (args) => ({
+        description: def.description,
+        messages: [{ role: "user", content: { type: "text", text: this.agentGuide(args.request) } }],
+      }),
+    }));
+  }
+
+  /** Pushes updated dynamic vault tools and prompts to AI Ecosystem when connected. */
+  syncEcosystemTools(): void {
+    const api = this.connector?.api;
+    if (!api) return;
+    try {
+      api.updateTools(MODULE_ID, this.buildHubTools());
+      api.updatePrompts(MODULE_ID, this.buildHubPrompts());
+    } catch (err) {
+      console.error("[environment-variables] Failed to sync tools with AI Ecosystem:", err);
+    }
+  }
+
+  private async handleEcosystemConnected(api: AIEcosystemAPI): Promise<void> {
+    if (this.server) {
+      await this.stopServer();
+    }
+
+    this.disposeSecretService?.();
+    const serviceDisposer = api.registerService("secrets", MODULE_ID, this.secretService);
+    this.disposeSecretService =
+      typeof serviceDisposer === "function"
+        ? serviceDisposer
+        : () => {
+            try {
+              api.unregisterService("secrets", MODULE_ID);
+            } catch {
+              // Ignore
+            }
+          };
+
+    if (this.data.clients.length > 0) {
+      await api
+        .importClients(
+          this.data.clients.map((c) => ({
+            id: c.id,
+            name: c.name,
+            tokenHash: c.tokenHash,
+            hint: c.hint,
+            createdAt: c.createdAt,
+            lastUsedAt: c.lastUsedAt,
+          })),
+          MODULE_ID,
+        )
+        .catch((err) => console.error("[environment-variables] Client export to AI Ecosystem failed:", err));
+    }
+
+    this.disposeServiceListener?.();
+    this.disposeServiceListener = api.onServiceChange((serviceName, available) => {
+      if (available) {
+        void this.adoption.inspectService(api, serviceName);
+      }
+    });
+
+    if (this.store.isUnlocked) {
+      void this.adoption.scanAll(api, listEcosystemServiceNames(this.app));
+    }
+
+    void this.tools.ready().then(() => {
+      this.syncEcosystemTools();
+      this.emitServerChange();
+    });
+    this.emitServerChange();
+  }
+
+  private handleEcosystemDisconnected(): void {
+    this.disposeServiceListener?.();
+    this.disposeServiceListener = undefined;
+    this.disposeSecretService?.();
+    this.disposeSecretService = undefined;
+    this.emitServerChange();
+  }
+
+  private async handleEcosystemMissing(): Promise<void> {
+    if (this.isEcosystemConnected) return;
+    if (this.data.settings.serverEnabled && !this.server?.running) {
+      await this.startTransitionServer();
+    }
+    if (!this.transitionNoticeShown) {
+      this.transitionNoticeShown = true;
+      const frag = createFragment();
+      frag.createDiv({ text: t("view.transition.body") });
+      const btn = frag.createEl("button", { text: t("view.transition.install"), cls: "mod-cta ev-notice-button" });
+      const notice = new Notice(frag, 15_000);
+      btn.addEventListener("click", () => {
+        notice.hide();
+        void this.installAiEcosystem();
+      });
+    }
+    this.emitServerChange();
+  }
+
+  private async startTransitionServer(): Promise<void> {
+    if (this.isEcosystemConnected) return;
+    await this.startServer();
+  }
+
   async setServerEnabled(enabled: boolean): Promise<void> {
     this.data.settings.serverEnabled = enabled;
     await this.saveAll();
+    if (this.isEcosystemConnected) {
+      this.emitServerChange();
+      return;
+    }
     if (enabled) await this.startServer();
     else await this.stopServer();
   }
 
   async restartServer(): Promise<void> {
+    if (this.isEcosystemConnected) return;
     await this.stopServer();
     if (this.data.settings.serverEnabled) await this.startServer();
     if (this.server?.running) await this.reconnectIntegrations();
@@ -413,11 +743,10 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   /**
-   * Starts this vault's server. When the port belongs to another vault (or another program), the
-   * server moves to the next free port and the connected AI clients are re-registered with it.
+   * Starts this vault's transition server when AI Ecosystem is not active.
    */
   private async startServer(): Promise<void> {
-    if (this.server?.running) return;
+    if (this.isEcosystemConnected || this.server?.running) return;
     const requested = this.data.settings.port;
     let port = requested;
     let owner: PortOwner | null = null;
@@ -511,7 +840,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     }
     this.data.settings.mcpServerName = name;
     await this.saveAll();
-    if (this.server?.running) await this.reconnectIntegrations();
+    if (this.server?.running || this.isEcosystemConnected) await this.reconnectIntegrations();
     else this.pendingReconnect = true;
     this.emitServerChange();
   }
@@ -541,6 +870,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     void this.registry.refresh().then(() => {
       this.registry.updateStatuses();
       this.server?.notifyToolsChanged();
+      this.syncEcosystemTools();
       this.emitServerChange();
     });
   }
@@ -557,7 +887,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     if (this.toolScanTimer !== undefined) window.clearTimeout(this.toolScanTimer);
     this.toolScanTimer = window.setTimeout(() => {
       this.toolScanTimer = undefined;
-      void this.registry.ensureFresh();
+      void this.registry.ensureFresh().then(() => this.syncEcosystemTools());
     }, 300);
   }
 
@@ -813,13 +1143,31 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   // ---------- clients ----------
 
   get serverUrl(): string {
-    return `http://127.0.0.1:${this.data.settings.port}/mcp`;
+    const port = this.isEcosystemConnected ? this.ecosystemPort : this.data.settings.port;
+    return `http://127.0.0.1:${port}/mcp`;
   }
 
   async addClient(name: string, access: ClientAccess): Promise<string> {
     const { record, token } = await createClient(name, access);
     this.data.clients.push(record);
     await this.saveAll();
+    if (this.connector?.api) {
+      await this.connector.api
+        .importClients(
+          [
+            {
+              id: record.id,
+              name: record.name,
+              tokenHash: record.tokenHash,
+              hint: record.hint,
+              createdAt: record.createdAt,
+              lastUsedAt: record.lastUsedAt,
+            },
+          ],
+          MODULE_ID,
+        )
+        .catch(() => undefined);
+    }
     this.emitServerChange();
     return token;
   }
@@ -849,13 +1197,13 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   /**
-   * One click: turns the server on, creates a token and registers it in the AI client.
+   * One click: creates a token, imports it into AI Ecosystem (or starts the transition server) and registers it in the AI client.
    * The token never appears on screen. Returns false (after a notice) on failure.
    */
   async connectIntegration(id: IntegrationId, access?: ClientAccess, quiet = false): Promise<boolean> {
     const integration = integrationById(id);
     if (!integration) return false;
-    if (!this.data.settings.serverEnabled || !this.server?.running) {
+    if (!this.isEcosystemConnected && (!this.data.settings.serverEnabled || !this.server?.running)) {
       await this.setServerEnabled(true);
       if (!this.server?.running) return false;
     }
@@ -873,6 +1221,23 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.data.clients = this.data.clients.filter((c) => c.integration !== id);
     this.data.clients.push(record);
     await this.saveAll();
+    if (this.connector?.api) {
+      await this.connector.api
+        .importClients(
+          [
+            {
+              id: record.id,
+              name: record.name,
+              tokenHash: record.tokenHash,
+              hint: record.hint,
+              createdAt: record.createdAt,
+              lastUsedAt: record.lastUsedAt,
+            },
+          ],
+          MODULE_ID,
+        )
+        .catch(() => undefined);
+    }
     this.emitServerChange();
     if (!quiet) new Notice(t("notice.connected", { client: integration.label }), 8_000);
     return true;

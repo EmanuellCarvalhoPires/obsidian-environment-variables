@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { urlMatchesPattern, isValidPattern } from "../src/engine/hosts";
-import { findPlaceholders, utf8ToBase64 } from "../src/engine/placeholders";
-import { PolicyError, prepareRequest } from "../src/engine/prepare";
-import { redactionVariants, redactText } from "../src/engine/redact";
+import { urlMatchesPattern, isValidPattern } from "../src/secrets/hosts";
+import { findPlaceholders, utf8ToBase64 } from "../src/secrets/placeholders";
+import { PolicyError, prepareRequest } from "../src/secrets/prepare";
+import { redactionVariants, redactText } from "../src/secrets/redact";
 import { SecretRecord } from "../src/store/types";
 import { secretInput } from "./helpers";
 

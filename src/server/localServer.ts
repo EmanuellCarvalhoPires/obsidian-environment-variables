@@ -1,6 +1,6 @@
 import * as http from "http";
 import { clearInterval, setInterval } from "timers";
-import { Broker } from "../engine/broker";
+import { Broker } from "../secrets/broker";
 import type { ToolsService } from "../tools/service";
 import { ClientContext } from "./clients";
 import { handleMcpMessage } from "./mcp";
@@ -131,9 +131,16 @@ export class LocalServer {
     if (req.headers.origin) return sendJson(res, 403, error("forbidden_origin", "Browser requests are not allowed."));
 
     const url = new URL(req.url ?? "/", `http://${host}`);
-    if (url.pathname === "/v1/health" && req.method === "GET") {
+    if ((url.pathname === "/v1/health" || url.pathname === "/health") && req.method === "GET") {
       // No secrets and no client data: only which plugin and which vault own this port.
-      return sendJson(res, 200, { ok: true, name: "environment-variables", version: this.options.version, vault: this.options.vault });
+      return sendJson(res, 200, {
+        ok: true,
+        status: "ok",
+        mode: "transition",
+        name: "environment-variables",
+        version: this.options.version,
+        vault: this.options.vault,
+      });
     }
 
     const client = await this.authenticate(req);
@@ -147,7 +154,7 @@ export class LocalServer {
       const result = broker.listSecrets(client);
       return sendJson(res, result.ok ? 200 : 423, result);
     }
-    if (url.pathname === "/v1/request" && req.method === "POST") {
+    if ((url.pathname === "/v1/request" || url.pathname === "/api/v1/environment-variables/request") && req.method === "POST") {
       const body = await readJson(req);
       if (body === undefined) return sendJson(res, 400, error("invalid_request", "Body must be JSON."));
       const result = await broker.execute(body as never, client);
@@ -217,7 +224,7 @@ export class LocalServer {
   }
 }
 
-function statusFor(code: string): number {
+export function statusFor(code: string): number {
   switch (code) {
     case "locked":
       return 423;

@@ -17,8 +17,8 @@
 // <key> in the map <map> of the service note. Only keys declared there can be injected: the agent
 // picks a key, never a secret.
 
-import { findPlaceholders, hasPlaceholderLikeText } from "../engine/placeholders";
-import { RequestInput } from "../engine/prepare";
+import { findPlaceholders, hasPlaceholderLikeText } from "../secrets/placeholders";
+import { RequestInput } from "../secrets/prepare";
 import { extractCodeBlock } from "./definition";
 import { ToolError, VaultNote } from "./types";
 
