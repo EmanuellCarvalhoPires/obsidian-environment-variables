@@ -72,7 +72,7 @@ export function groupCatalogEntries(entries: McpCatalogEntry[]): McpCatalogGroup
   });
 }
 
-export type McpPackageFileKind = "index" | "tool" | "request" | "request-only";
+export type McpPackageFileKind = "index" | "tool" | "request" | "request-only" | "database";
 
 export interface McpPackageFile {
   path: string;
@@ -95,12 +95,14 @@ export interface McpPackageManifest {
   tag: string;
   logo: string;
   index: string;
+  database?: string;
   files: McpPackageFile[];
 }
 
 /** Reads a repo's raw files by path (relative to that repo's root). */
 export interface GithubReader {
   fetchText(path: string): Promise<string>;
+  fetchBinary(path: string): Promise<ArrayBuffer>;
 }
 
 export async function fetchCatalog(reader: GithubReader): Promise<McpCatalog> {

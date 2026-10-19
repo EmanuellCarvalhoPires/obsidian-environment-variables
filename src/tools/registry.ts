@@ -65,6 +65,7 @@ export class ToolRegistry {
   constructor(
     private readonly source: NoteSource,
     private readonly options: () => RegistryOptions,
+    private readonly dbToolsProvider?: () => ToolEntry[],
   ) {}
 
   /** Rescans every tool note. Calls made while a scan runs are merged into one more scan. */
@@ -234,10 +235,23 @@ export class ToolRegistry {
   /** Builds the final entries from the parsed notes. Reads nothing. */
   private build(): void {
     const next: ToolEntry[] = [];
+    const dbTools = this.dbToolsProvider ? this.dbToolsProvider() : [];
+    const dbToolNames = new Set(dbTools.map((t) => t.name));
+
     for (const path of [...this.parsed.keys()].sort((a, b) => a.localeCompare(b))) {
       const base = this.parsed.get(path)!;
+      // If a database tool exists with the same name, the database is the source of truth
+      if (dbToolNames.has(base.name)) {
+        continue;
+      }
       // Copies: duplicates and instances add problems and params that must not stick to the cache.
       const entry: ToolEntry = { ...base, params: { ...base.params }, problems: [...base.problems], warnings: [...base.warnings] };
+      if (entry.serviceTag && entry.serviceParam) this.addServiceChoices(entry, entry.serviceTag, entry.serviceParam);
+      next.push(entry);
+    }
+
+    for (const base of dbTools) {
+      const entry: ToolEntry = { ...base, params: { ...base.params }, problems: [...(base.problems ?? [])], warnings: [...(base.warnings ?? [])] };
       if (entry.serviceTag && entry.serviceParam) this.addServiceChoices(entry, entry.serviceTag, entry.serviceParam);
       next.push(entry);
     }

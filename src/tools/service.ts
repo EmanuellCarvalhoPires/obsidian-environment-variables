@@ -9,6 +9,7 @@ import { ToolRegistry } from "./registry";
 import { parseRequestBlock, resolveRequest, servicePlaceholderNames } from "./requestNote";
 import { ScriptRunner } from "./scriptRunner";
 import { compileEndpoint, EndpointPattern, endpointOf, howToRun, matchEndpoint, RunHint, searchTools } from "./toolSearch";
+import { McpDbManager } from "./mcpDb";
 import { NoteSource, ToolEntry, ToolError, VaultNote } from "./types";
 
 export interface ToolsSettings {
@@ -29,6 +30,7 @@ export interface ToolsDeps {
   settings: () => ToolsSettings;
   /** The authoring guide for AI agents, in the user's language. */
   guide: () => string;
+  dbManager?: McpDbManager;
 }
 
 export interface McpToolDefinition {
@@ -234,8 +236,16 @@ export class ToolsService {
     const service = this.serviceFor(entry, checked.args);
 
     if (entry.kind === "request") {
-      const note = this.resolveNote(entry.request!, entry.notePath, "Request note");
-      const res = await this.runRequestNote(note, checked.args, service, entry.notePath, client);
+      let note: VaultNote;
+      let body: string | undefined;
+      const dbReq = this.deps.dbManager?.getRequestNote(entry.name);
+      if (dbReq) {
+        note = dbReq.note;
+        body = dbReq.body;
+      } else {
+        note = this.resolveNote(entry.request!, entry.notePath, "Request note");
+      }
+      const res = await this.runRequestNote(note, checked.args, service, entry.notePath, client, body);
       return compact(res);
     }
 
@@ -312,8 +322,9 @@ export class ToolsService {
     }
   }
 
-  private async runRequestNote(note: VaultNote, params: Record<string, unknown>, serviceOverride: string | undefined, fromPath: string, client: ClientContext) {
-    const tpl = parseRequestBlock(await this.deps.source.read(note), note.name);
+  private async runRequestNote(note: VaultNote, params: Record<string, unknown>, serviceOverride: string | undefined, fromPath: string, client: ClientContext, bodyOverride?: string) {
+    const rawBody = bodyOverride !== undefined ? bodyOverride : await this.deps.source.read(note);
+    const tpl = parseRequestBlock(rawBody, note.name);
     const serviceRef = serviceOverride ?? (typeof note.frontmatter.service === "string" ? note.frontmatter.service : undefined);
     // A service override from a tool is relative to the tool note; the request's own link to the request note.
     const service = serviceRef ? this.resolveNote(serviceRef, serviceOverride ? fromPath : note.path, "Service note") : undefined;

@@ -15,4 +15,11 @@ export class HttpGithubReader implements GithubReader {
     if (response.status < 200 || response.status >= 300) throw new Error(`${response.status} fetching ${path}`);
     return response.text;
   }
+
+  async fetchBinary(path: string): Promise<ArrayBuffer> {
+    const url = `${this.baseUrl.replace(/\/+$/, "")}/${path}`;
+    const response = await requestUrl({ url, throw: false });
+    if (response.status < 200 || response.status >= 300) throw new Error(`${response.status} fetching binary ${path}`);
+    return response.arrayBuffer;
+  }
 }
