@@ -2,6 +2,7 @@ import { SecretRecord } from "../store/types";
 import { utf8ToBase64 } from "./placeholders";
 
 export const REDACTED = "***";
+export const INSPECTOR_REDACTED = "[REDACTED]";
 
 /** Full values shorter than this are not masked (too likely to hit normal text). */
 const MIN_REDACT_LENGTH = 4;
@@ -96,16 +97,31 @@ function partialSources(secrets: SecretRecord[]): string[] {
 
 // ---------- matching ----------
 
-export function redactText(text: string, variants: string[]): RedactResult {
+export function redactText(text: string, variants: string[], mask: string = REDACTED): RedactResult {
   let count = 0;
   let out = text;
   for (const v of variants) {
     if (!out.includes(v)) continue;
     const parts = out.split(v);
     count += parts.length - 1;
-    out = parts.join(REDACTED);
+    out = parts.join(mask);
   }
   return { text: out, count };
+}
+
+export function redactHeaders(
+  headers: Record<string, string>,
+  variants: string[],
+  mask: string = REDACTED,
+): { headers: Record<string, string>; count: number } {
+  const out: Record<string, string> = {};
+  let count = 0;
+  for (const [k, v] of Object.entries(headers)) {
+    const r = redactText(v, variants, mask);
+    out[k] = r.text;
+    count += r.count;
+  }
+  return { headers: out, count };
 }
 
 const BASE = 257;
@@ -122,7 +138,7 @@ function hashWindow(text: string, start: number, length: number): number {
  * Catches truncated tokens in upstream error messages ("invalid token ATATT3xFfGF0...").
  * Rabin-Karp rolling hash keeps this linear in the size of the text.
  */
-function redactPartials(text: string, sources: string[]): RedactResult {
+function redactPartials(text: string, sources: string[], mask: string = REDACTED): RedactResult {
   const k = PARTIAL_WINDOW;
   if (sources.length === 0 || text.length < k) return { text, count: 0 };
 
@@ -158,21 +174,21 @@ function redactPartials(text: string, sources: string[]): RedactResult {
   let out = "";
   let last = 0;
   for (const [start, end] of hits) {
-    out += text.slice(last, start) + REDACTED;
+    out += text.slice(last, start) + mask;
     last = end;
   }
   return { text: out + text.slice(last), count: hits.length };
 }
 
 /** Full variants first, then fragments. Use it on everything that leaves the plugin or is logged. */
-export function createRedactor(secrets: SecretRecord[]): Redactor {
+export function createRedactor(secrets: SecretRecord[], mask: string = REDACTED): Redactor {
   const variants = redactionVariants(secrets);
   const sources = partialSources(secrets);
   return {
     redact(text: string): RedactResult {
       if (!text) return { text, count: 0 };
-      const full = redactText(text, variants);
-      const partial = redactPartials(full.text, sources);
+      const full = redactText(text, variants, mask);
+      const partial = redactPartials(full.text, sources, mask);
       return { text: partial.text, count: full.count + partial.count };
     },
   };

@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting, SuggestModal } from "obsidian";
 import { iconLine } from "./dom";
-import { ApprovalRequest } from "../engine/broker";
-import { isValidPattern, parsePattern, wildcardRisk } from "../engine/hosts";
+import { ApprovalRequest } from "../secrets/broker";
+import { isValidPattern, parsePattern, wildcardRisk } from "../secrets/hosts";
 import { ClientAccess } from "../server/clients";
 import { t } from "../i18n";
 import { NameEntry } from "../settings";

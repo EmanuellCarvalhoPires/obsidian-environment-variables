@@ -2,7 +2,7 @@ import { syntaxTree } from "@codemirror/language";
 import { RangeSetBuilder } from "@codemirror/state";
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
 import { editorLivePreviewField, MarkdownPostProcessorContext } from "obsidian";
-import { placeholderRegex } from "../engine/placeholders";
+import { placeholderRegex } from "../secrets/placeholders";
 import { buildChip, ChipSource } from "./chip";
 import { KnownNames } from "./properties";
 

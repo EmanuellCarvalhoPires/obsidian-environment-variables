@@ -5,7 +5,7 @@ import { Integration, IntegrationId, INTEGRATIONS } from "../integrations/integr
 import type EnvironmentVariablesPlugin from "../main";
 import { MIN_PASSWORD_LENGTH, passwordStrength } from "../store/secretStore";
 import { SecretRecord } from "../store/types";
-import { wildcardRisk } from "../engine/hosts";
+import { wildcardRisk } from "../secrets/hosts";
 import { accessOf, ClientAccess, ClientRecord } from "../server/clients";
 import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal } from "./modals";
 import { McpAppConfig, McpGroupConfig, McpGroupStats, newMcpApp, newMcpGroup } from "../tools/mcpGroups";
@@ -185,12 +185,38 @@ export class EnvironmentVariablesView extends ItemView {
     this.renderLog(root);
   }
 
-  /** The state of the local MCP server, always at the top of the panel. */
+  /** The state of the AI Ecosystem connection (or legacy transition server), always at the top of the panel. */
   private renderServerHeader(root: HTMLElement): void {
+    if (this.plugin.isEcosystemConnected) {
+      const header = new Setting(root).setName(t("settings.server")).setClass("ev-server-header");
+      header.nameEl.prepend(createSpan({ cls: "ev-dot is-on" }));
+      header.setDesc(t("view.server.ecosystem", { port: this.plugin.ecosystemPort }));
+      header.addButton((b) => b.setButtonText(t("view.log.live")).onClick(() => void this.plugin.openEcosystemInspector()));
+      return;
+    }
+
+    const banner = root.createDiv({ cls: "ev-transition-banner" });
+    const titleRow = banner.createDiv({ cls: "ev-transition-title" });
+    const icon = titleRow.createSpan({ cls: "ev-transition-icon" });
+    setIcon(icon, "alert-triangle");
+    titleRow.createSpan({ text: t("view.transition.title") });
+    banner.createDiv({ text: t("view.transition.body"), cls: "ev-transition-body ev-muted" });
+    const actions = banner.createDiv({ cls: "ev-transition-actions" });
+    const installBtn = actions.createEl("button", { text: t("view.transition.install"), cls: "mod-cta" });
+    installBtn.addEventListener("click", () => {
+      installBtn.disabled = true;
+      installBtn.setText(t("view.transition.installing"));
+      void this.plugin.installAiEcosystem().finally(() => void this.refresh());
+    });
+
     const running = this.plugin.server?.running ?? false;
     const header = new Setting(root).setName(t("settings.server")).setClass("ev-server-header");
     header.nameEl.prepend(createSpan({ cls: `ev-dot ${running ? "is-on" : "is-off"}` }));
-    header.setDesc(`${running ? `127.0.0.1:${this.plugin.data.settings.port}` : t("view.server.off")} · ${this.plugin.serverName}`);
+    header.setDesc(
+      running
+        ? `${t("view.server.transition", { port: this.plugin.data.settings.port })} · ${this.plugin.serverName}`
+        : `${t("view.server.off")} · ${this.plugin.serverName}`,
+    );
     header.addButton((b) => {
       b.setButtonText(running ? t("view.server.stop") : t("view.server.start")).onClick(() => void this.plugin.setServerEnabled(!running));
       if (!running) b.setCta();
@@ -380,7 +406,8 @@ export class EnvironmentVariablesView extends ItemView {
       new PromptModal(this.app, t("view.clients.namePrompt"), (name) =>
         new AccessModal(this.app, this.plugin.store, name || "AI client", null, async (access) => {
           const token = await this.plugin.addClient(name, access);
-          new ClientTokenModal(this.app, token, this.plugin.data.settings.port, this.plugin.server?.running ?? false, this.plugin.serverName).open();
+          const running = this.plugin.isEcosystemConnected || (this.plugin.server?.running ?? false);
+          new ClientTokenModal(this.app, token, this.plugin.ecosystemPort, running, this.plugin.serverName).open();
         }).open(),
       ).open(),
     );
@@ -637,7 +664,9 @@ export class EnvironmentVariablesView extends ItemView {
     const section = root.createDiv({ cls: "ev-section" });
     const entries = this.plugin.audit.list().slice(0, 100);
     const heading = sectionHeading(section, t("view.section.logs"));
-    heading.addButton((b) => b.setButtonText(t("view.log.live")).onClick(() => void this.plugin.activateActivityView()));
+    if (this.plugin.isEcosystemConnected) {
+      heading.addButton((b) => b.setButtonText(t("view.log.live")).onClick(() => void this.plugin.openEcosystemInspector()));
+    }
     heading.addButton((b) =>
       b
         .setButtonText(t("view.log.clear"))
@@ -658,7 +687,17 @@ export class EnvironmentVariablesView extends ItemView {
       const tr = tbody.createEl("tr", { cls: `ev-log-${e.outcome}` });
       tr.createEl("td", { text: new Date(e.time).toLocaleString() });
       tr.createEl("td", { text: e.client });
-      tr.createEl("td", { text: e.action === "list" ? "list_secrets" : e.action === "tool" ? `tool ${e.tool ?? ""}` : `${e.method ?? ""} ${e.target ?? ""}` });
+      const actionLabel =
+        e.action === "list"
+          ? "list_secrets"
+          : e.action === "tool"
+            ? `tool ${e.tool ?? ""}`
+            : e.action === "adopt"
+              ? `adopt ${e.target ?? ""}`
+              : e.action === "spawn"
+                ? "spawn"
+                : `${e.method ?? ""} ${e.target ?? ""}`;
+      tr.createEl("td", { text: actionLabel.trim() });
       tr.createEl("td", { text: e.secrets.join(", ") });
       tr.createEl("td", { text: e.status ? `${e.outcome} ${e.status}` : e.outcome, attr: { title: e.detail ?? "" } });
     }
@@ -710,7 +749,6 @@ const HOW_TO = [
   ["view.howto.groups", "view.howto.groupsDesc"],
   ["view.howto.download", "view.howto.downloadDesc"],
   ["view.howto.logs", "view.howto.logsDesc"],
-  ["view.howto.activity", "view.howto.activityDesc"],
   ["view.howto.settings", "view.howto.settingsDesc"],
 ] as const;
 

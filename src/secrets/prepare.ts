@@ -61,7 +61,17 @@ export type SecretLookup = (name: string) => SecretRecord | undefined;
 /** Per-client access control. Return false when the client may not use this secret. */
 export type SecretPermit = (secret: SecretRecord) => boolean;
 
-export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit: SecretPermit = () => true): PreparedRequest {
+export interface PrepareRequestOptions {
+  /** Allows placeholders in URL path/query and body regardless of secret.placement (used by SecretVaultService.request). */
+  allowUrlAndBodyPlacement?: boolean;
+}
+
+export function prepareRequest(
+  input: RequestInput,
+  lookup: SecretLookup,
+  permit: SecretPermit = () => true,
+  options?: PrepareRequestOptions,
+): PreparedRequest {
   if (!input || typeof input.url !== "string" || !input.url) throw new PolicyError("invalid_request", "url is required.");
   const method = (input.method ?? "GET").toUpperCase();
   if (!METHODS.has(method)) throw new PolicyError("invalid_request", `Unsupported method ${method}.`);
@@ -88,6 +98,7 @@ export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit
   const display = displayTargetOf(target);
   const used = new Map<string, SecretRecord>();
   const placements: SecretPlacements = { headers: false, url: false, body: false };
+  const allowUrlAndBody = options?.allowUrlAndBodyPlacement === true;
 
   const resolveIn = (text: string, where: "url" | "header" | "body", checkUrl: URL): string => {
     assertWellFormed(text);
@@ -97,8 +108,13 @@ export function prepareRequest(input: RequestInput, lookup: SecretLookup, permit
     let last = 0;
     for (const m of matches) {
       const secret = lookupOrThrow(lookup, m);
-      if (!permit(secret)) throw new PolicyError("secret_not_permitted", `This client is not allowed to use ${secret.name}. Grant access in Obsidian (Environment Keys > AI clients).`);
-      checkPlacement(secret, where);
+      if (!permit(secret)) {
+        throw new PolicyError(
+          "secret_not_permitted",
+          `This client is not allowed to use ${secret.name}. Grant access in Obsidian (Environment Keys > AI clients).`,
+        );
+      }
+      if (!allowUrlAndBody) checkPlacement(secret, where);
       checkDestination(secret, checkUrl, display);
       used.set(secret.name, secret);
       placements[where === "header" ? "headers" : where] = true;

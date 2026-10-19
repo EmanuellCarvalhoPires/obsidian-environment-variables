@@ -24,9 +24,10 @@ Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (C
 
 > Desktop only, Obsidian 1.13 or later. The plugin runs a local server, which needs Node.js APIs that are not available on mobile.
 
-## Installation
+## Installation & AI Ecosystem Integration (v2.0)
 
-- **Community plugins:** in Obsidian, open **Settings → Community plugins → Browse**, search for **Environment Keys**, install and enable it.
+- **Recommended — with AI Ecosystem:** install and enable both **AI Ecosystem** (`ai-ecosystem`) and **Environment Keys** (`environment-variables`) in **Settings → Community plugins**. In v2.0, Environment Keys registers as a module on AI Ecosystem's unified local server (`127.0.0.1:27150`), exposes the `secrets` service on the Service Bus for sibling modules (such as Telegram AI Gateway and AI Bridge), automatically adopts plaintext tokens exposed via `secret-holder:*`, and streams redacted request diagnostics to AI Ecosystem's **Live Request Inspector**.
+- **Transition Mode (standalone compatibility):** if you update Environment Keys to 2.0 before installing AI Ecosystem, the plugin starts a lightweight transition server on port 27150 (`/mcp`, `/v1/request`, `/api/v1/environment-variables/request`) so existing scripts and MCP clients keep working, and shows a non-blocking banner with a 1-click **Install and enable AI Ecosystem** button. As soon as AI Ecosystem becomes active (`ai-ecosystem:ready`), Environment Keys stops the transition server, frees port 27150, and registers as a module automatically.
 - **Manual:** download `main.js`, `manifest.json` and `styles.css` from the [latest release](../../releases/latest) into `<vault>/.obsidian/plugins/environment-variables/`, then enable the plugin in **Settings → Community plugins**.
 
 ## How it works
@@ -35,7 +36,7 @@ Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (C
 2. Create a master password. Your variables are encrypted with it.
 3. Add a variable: a name (`JIRA_ACME`), a type, the value and the **allowed hosts** (`acme.atlassian.net`).
 4. In your notes, write `{{basic:JIRA_ACME}}` instead of the token. Type `{{secret:` to autocomplete names, in the note text or in a property value, even while the vault is locked. Keys are shown as a lock chip in reading view and in the Properties panel; click a chip in Properties to edit it. A chip turns red when the name does not exist in the unlocked vault.
-5. In **AI clients**, click **Connect** next to your AI tool. The plugin turns on the local server and registers itself in the tool. There is nothing to copy or paste.
+5. In **AI Ecosystem** (or **AI clients** in Environment Keys), click **Connect** next to your AI tool to register the unified MCP server. There is nothing to copy or paste.
 
 Already have tokens in your notes? Select one and run **Convert selection into a variable**. When you paste something that looks like a token (Atlassian, GitHub, GitLab, OpenAI, Anthropic, AWS, Google, Slack, Stripe or a JWT) into a note, the plugin offers to store it encrypted and put a key in its place. You can turn this warning off in the settings.
 
@@ -54,8 +55,8 @@ Already have tokens in your notes? Select one and run **Convert selection into a
 
 Open the panel, expand **AI clients** and click **Connect**. The plugin:
 
-1. turns on the local server;
-2. creates a client token (it is never shown);
+1. ensures the local server (AI Ecosystem or Transition Mode) is running;
+2. creates a client token (it is never shown) and exports it to AI Ecosystem when connected;
 3. registers the server in the tool:
    - **Claude Code:** runs `claude mcp add --transport http --scope user environment-variables ...`, so it is available in every project;
    - **Codex** (CLI, IDE extension and app): adds a clearly marked `[mcp_servers.environment-variables]` block to `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). The rest of the file is left untouched;
@@ -82,8 +83,10 @@ Add an HTTP MCP server at `http://127.0.0.1:<port>/mcp` with the header `Authori
 
 ### Scripts (REST)
 
+Both the canonical module route `/api/v1/environment-variables/request` and the legacy root alias `/v1/request` are supported:
+
 ```bash
-curl -s http://127.0.0.1:27150/v1/request \
+curl -s http://127.0.0.1:27150/api/v1/environment-variables/request \
   -H "Authorization: Bearer <client token>" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://acme.atlassian.net/rest/api/3/myself","headers":{"Authorization":"{{basic:JIRA_ACME}}"}}'

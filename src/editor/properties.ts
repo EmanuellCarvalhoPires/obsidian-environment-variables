@@ -2,7 +2,7 @@
 // Clicking the chip shows the original field again for editing. Only the DOM is touched:
 // the property value itself never changes.
 
-import { findPlaceholders } from "../engine/placeholders";
+import { findPlaceholders } from "../secrets/placeholders";
 import { buildChip } from "./chip";
 
 const FIELD_SELECTOR = ".metadata-property-value .metadata-input-longtext";

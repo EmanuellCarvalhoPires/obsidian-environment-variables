@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectToken } from "../src/engine/tokenPatterns";
+import { detectToken } from "../src/secrets/tokenPatterns";
 
 // Fake values with the right shape. None of them is a real credential.
 const fake = (prefix: string, n: number, alphabet = "aB3") => prefix + alphabet.repeat(Math.ceil(n / alphabet.length)).slice(0, n);

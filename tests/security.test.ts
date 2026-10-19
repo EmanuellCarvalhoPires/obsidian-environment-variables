@@ -9,10 +9,10 @@ import {
   UnsupportedKdfError,
   WrongPasswordError,
 } from "../src/crypto/vaultFile";
-import { isValidPattern, parsePattern, urlMatchesPattern, wildcardRisk } from "../src/engine/hosts";
-import { utf8ToBase64 } from "../src/engine/placeholders";
-import { PolicyError, prepareRequest } from "../src/engine/prepare";
-import { createRedactor, REDACTED } from "../src/engine/redact";
+import { isValidPattern, parsePattern, urlMatchesPattern, wildcardRisk } from "../src/secrets/hosts";
+import { utf8ToBase64 } from "../src/secrets/placeholders";
+import { PolicyError, prepareRequest } from "../src/secrets/prepare";
+import { createRedactor, REDACTED } from "../src/secrets/redact";
 import { SecretStore } from "../src/store/secretStore";
 import { SecretRecord } from "../src/store/types";
 import { MemoryIO, PASSWORD, secretInput, unlockedStore } from "./helpers";
