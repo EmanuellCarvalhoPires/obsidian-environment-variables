@@ -9,6 +9,11 @@ class FakeReader implements GithubReader {
     if (text === undefined) throw new Error(`404: ${path}`);
     return text;
   }
+  async fetchBinary(path: string): Promise<ArrayBuffer> {
+    const text = this.files[path];
+    if (text === undefined) throw new Error(`404: ${path}`);
+    return new TextEncoder().encode(text).buffer;
+  }
 }
 
 const MANIFEST: McpPackageManifest = {

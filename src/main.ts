@@ -1,4 +1,4 @@
-import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon } from "obsidian";
+import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon, TFile } from "obsidian";
 import { AuditLog } from "./audit/auditLog";
 import { installAndEnableEcosystem } from "./ecosystem/installEcosystem";
 import {
@@ -48,6 +48,7 @@ import {
   serviceTemplateFileName,
 } from "./tools/mcpCatalog";
 import { computeMcpGroupStats, matchedNotePaths, McpAppConfig, McpGroupConfig, McpGroupStats, randomGroupId } from "./tools/mcpGroups";
+import { McpDbManager } from "./tools/mcpDb";
 import { ObsidianNoteSource } from "./tools/obsidianSource";
 import { ToolRegistry } from "./tools/registry";
 import { ScriptRunner } from "./tools/scriptRunner";
@@ -76,6 +77,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   server: LocalServer | null = null;
   registry!: ToolRegistry;
   tools!: ToolsService;
+  mcpDb!: McpDbManager;
   /** Read access to the vault's notes, shared with MCP groups to resolve their tag/link filters. */
   toolSource!: NoteSource;
   /** Who runs a tool from the panel: the user, with access to every variable. */
@@ -176,13 +178,15 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       },
     });
 
-    // Vault tools: MCP tools defined by notes, found by tag.
+    // Vault tools: MCP tools defined by notes or SQLite databases (mcp.db)
     const source = new ObsidianNoteSource(this.app);
     this.toolSource = source;
+    this.mcpDb = new McpDbManager(this.app);
     const s = () => this.data.settings;
     this.registry = new ToolRegistry(
       source,
       () => ({ enabled: s().toolsEnabled, toolTag: s().toolTag, scriptsEnabled: s().scriptsEnabled }),
+      () => this.mcpDb.getTools(),
     );
     this.tools = new ToolsService({
       registry: this.registry,
@@ -192,13 +196,35 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       audit: this.audit,
       settings: () => ({ ...s() }),
       guide: () => this.agentGuide(),
+      dbManager: this.mcpDb,
     });
     this.register(this.registry.onChange(() => this.syncEcosystemTools()));
-    // Only tool notes and instance notes are read again; the registry ignores every other note.
+    // Only tool notes, instance notes and mcp.db files trigger updates.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteEvent(() => this.registry.noteChanged(file.path))));
-    this.registerEvent(this.app.vault.on("delete", (file) => this.onNoteEvent(() => this.registry.noteDeleted(file.path))));
-    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => this.onNoteEvent(() => this.registry.noteRenamed(oldPath, file.path))));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      if (file.name === "mcp.db") {
+        this.mcpDb.refresh();
+        void this.registry.refresh();
+      } else {
+        this.onNoteEvent(() => this.registry.noteDeleted(file.path));
+      }
+    }));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (file.name === "mcp.db" || oldPath.endsWith("mcp.db")) {
+        this.mcpDb.refresh();
+        void this.registry.refresh();
+      } else {
+        this.onNoteEvent(() => this.registry.noteRenamed(oldPath, file.path));
+      }
+    }));
+    this.registerEvent(this.app.vault.on("create", (file) => {
+      if (file.name === "mcp.db") {
+        this.mcpDb.refresh();
+        void this.registry.refresh();
+      }
+    }));
     this.register(() => {
+      this.mcpDb.close();
       if (this.toolScanTimer !== undefined) window.clearTimeout(this.toolScanTimer);
     });
 
@@ -330,10 +356,15 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   /** Opens the AI Ecosystem Live Request Inspector when connected. */
-  async openEcosystemInspector(): Promise<void> {
-    const eco = getEcosystemPlugin(this.app);
+  async openEcosystemInspector(placement: "sidebar" | "tab" = "tab"): Promise<void> {
+    const eco = getEcosystemPlugin(this.app) as unknown as {
+      openInspectorView?: (placement?: "sidebar" | "tab") => Promise<void>;
+      openInspector?: (placement?: "sidebar" | "tab") => Promise<void>;
+    };
     if (eco && typeof eco.openInspectorView === "function") {
-      await eco.openInspectorView();
+      await eco.openInspectorView(placement);
+    } else if (eco && typeof eco.openInspector === "function") {
+      await eco.openInspector(placement);
     }
   }
 
@@ -1026,17 +1057,29 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     let skipped = 0;
     for (const file of files) {
       const target = normalizePath(`${packageFolder}/${file.path}`);
-      if (this.app.vault.getAbstractFileByPath(target)) {
-        skipped++;
-      } else {
-        const folder = target.slice(0, target.lastIndexOf("/"));
-        if (folder && !madeFolders.has(folder)) {
-          madeFolders.add(folder);
-          if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+      const existing = this.app.vault.getAbstractFileByPath(target);
+      const folder = target.slice(0, target.lastIndexOf("/"));
+      if (folder && !madeFolders.has(folder)) {
+        madeFolders.add(folder);
+        if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+      }
+
+      if (file.kind === "database") {
+        const buffer = await reader.fetchBinary(`${entry.path}/${file.path}`);
+        if (existing instanceof TFile) {
+          await this.app.vault.modifyBinary(existing, buffer);
+        } else if (!existing) {
+          await this.app.vault.createBinary(target, buffer);
         }
-        const content = await reader.fetchText(`${entry.path}/${file.path}`);
-        await this.app.vault.create(target, content);
         written++;
+      } else {
+        if (existing) {
+          skipped++;
+        } else {
+          const content = await reader.fetchText(`${entry.path}/${file.path}`);
+          await this.app.vault.create(target, content);
+          written++;
+        }
       }
       onProgress?.(written + skipped, files.length);
     }
