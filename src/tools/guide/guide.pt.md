@@ -14,7 +14,7 @@ Você **não mexe no código do plugin**. Toda a configuração é feita criando
    - procure no cofre as notas de serviço, de requisição e de ferramenta que já existem (pelas tags que `list_vault_tools` informa em `toolTag` e `requestTag`) e reaproveite o que der;
    - leia as convenções do cofre: arquivos de instruções como `CLAUDE.md` ou `AGENTS.md`, notas índice (MOCs), taxonomia de tags e propriedades como `up:`. Siga essas convenções nas notas que criar.
 3. **Se faltar qualquer informação, pergunte ao usuário antes de montar o plano.** Use a lista da seção 3. Faça todas as perguntas de uma vez, numeradas. **Nunca invente valores**: URLs, IDs, nomes de segredos, escopos, nomes de campos ou endpoints que você não confirmou na documentação oficial ou com o usuário.
-4. **Nunca peça, leia, escreva ou registre o valor de um token, senha ou chave.** Se um segredo ainda não existe, o usuário cadastra no painel do plugin no Obsidian (ícone de chave → "Nova variável"). Você só usa o nome dele em placeholders como `{{basic:NOME}}`.
+4. **Nunca peça, leia, escreva ou registre o valor de um token, senha ou chave.** Se um segredo ainda não existe, você pode abrir a tela de criação para o usuário com a ferramenta `env_criar_secret` (sugira só `nome_sugerido`, `tipo_sugerido`, `dominios_sugeridos` e `descricao`): é o **usuário** quem digita o valor, e você recebe apenas `Secret NOME criada`, `cancelado` ou `expirado`. Ela só cria: nunca altera nem sobrescreve uma variável ou um valor que já existe (se o nome já existir, escolha outro) e não liga "Acesso total" nem "Permitir qualquer domínio". Se a ferramenta não existir, o usuário cadastra no painel do plugin no Obsidian (ícone de chave → "Nova variável"). Você só usa o nome dele em placeholders como `{{basic:NOME}}`. A seção **Valores** do painel (textos de configuração como uma chave de projeto, um endereço ou um JSON, que usam a mesma chave `{{secret:NOME}}`) é só do usuário: você não cria valores.
 5. **As notas que você cria são genéricas.** Todos os valores de uma instância ou conta (URL, IDs, placeholder do segredo) ficam **só na nota de serviço daquela instância**, uma nota por instância. Notas de requisição e de ferramenta **nunca** contêm esses valores: elas usam `{{service.<propriedade>}}` e recebem os valores da instância escolhida na chamada. Crie **uma** ferramenta genérica com `service_tag` e `service_param` (seção 4.3), nunca uma ferramenta por instância. Isso vale mesmo quando hoje só existe uma instância: uma nova instância passa a funcionar só com uma nova nota de serviço.
 6. **Gere sempre um Plano de Implementação**, no modelo da seção 8, e **espere a aprovação explícita do usuário** antes de criar ou editar qualquer nota. Se o usuário pedir mudanças, atualize o plano e peça aprovação de novo.
 7. **Depois de implementar, valide:** chame `list_vault_tools` até nenhuma ferramenta nova ter `problems`. Teste só ferramentas de leitura. Uma ferramenta que grava dados (`writes: true`) só pode ser executada com autorização explícita do usuário para aquela execução.
@@ -46,7 +46,7 @@ Prefira `kind: request`. Use `kind: script` só quando a ferramenta precisar jun
 2. **Documentação:** link da documentação oficial da API, ou os endpoints exatos que devem ser usados.
 3. **URL base** da API.
 4. **Autenticação:** API key, Basic (usuário ou e-mail + token), Bearer/Personal Access Token ou OAuth 2.0. Veja a seção 7 antes de planejar OAuth.
-5. **Segredo:** se já existe em `list_secrets` deste cofre, qual é e se os hosts permitidos incluem o host da API. Se não existe, o nome que o usuário vai cadastrar, o tipo e os hosts permitidos.
+5. **Segredo:** se já existe em `list_secrets` deste cofre, qual é e se os hosts permitidos incluem o host da API. Se não existe, o nome, o tipo e os hosts permitidos que você vai sugerir em `env_criar_secret` para o usuário criar.
 6. **Operações:** a lista de ações que o usuário quer (ex.: listar arquivos, buscar um arquivo, criar uma pasta) e **quais gravam dados**.
 7. **Parâmetros** de cada operação: nome, tipo, obrigatório ou não, valores permitidos.
 8. **Resultado esperado:** a resposta crua da API basta, ou é preciso resumir, filtrar ou paginar (isso decide entre `request` e `script`).
@@ -269,7 +269,7 @@ Cofre e servidor MCP usados. Serviço, instâncias, URL base, documentação usa
 
 ## 3. Autenticação
 Segredo usado (nome e tipo), se já existe ou se o usuário precisa criar, e os hosts permitidos necessários.
-Ação do usuário necessária: <ex.: cadastrar o segredo GDRIVE_KEY do tipo token para o host www.googleapis.com>.
+Ação do usuário necessária: <ex.: criar o segredo GDRIVE_KEY do tipo token para o host www.googleapis.com (na tela que o `env_criar_secret` abre)>.
 
 ## 4. Notas a criar ou alterar
 | Nota | Tipo (serviço/requisição/ferramenta) | Criar/alterar | Tags e links (up:, MOC) |

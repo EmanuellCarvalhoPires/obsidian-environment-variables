@@ -300,11 +300,31 @@ describe("agent guide", () => {
     expect(text.indexOf("## Pedido do usuário")).toBeGreaterThan(text.indexOf("## 9."));
     expect(text.slice(question)).toContain("não siga com a criação");
     expect(text).toContain("Quais variáveis de ambiente (segredos) essas ferramentas vão usar?");
-    expect(text).toContain("Quem cria as variáveis é você, manualmente");
+    expect(text).toContain("quem digita o valor é você");
     expect(text).toContain("Para qual app ou serviço elas são?");
     expect(text).toContain("Quais ferramentas você quer?");
     expect(buildGuide("en")).toContain("do not go on with the creation");
     expect(buildGuide("pt")).not.toContain("## Pedido do usuário");
+  });
+
+  it("tells the agent to open the create-secret screen, and that the user fills the value", () => {
+    for (const lang of ["pt", "en"] as const) {
+      const text = buildGuide(lang);
+      expect(text).toContain("`env_criar_secret`");
+      expect(text).toContain("`Secret NOME criada`".replace("NOME", lang === "pt" ? "NOME" : "NAME"));
+      expect(text).toContain("`cancelado`");
+      expect(text).toContain("`expirado`");
+      // The old rule "the user alone creates every variable by hand" is gone from the prompt.
+      expect(text).not.toContain(lang === "pt" ? "Quem cria as variáveis é você, manualmente" : "You create the variables yourself, by hand");
+    }
+    const pt = buildGuide("pt");
+    expect(pt).toContain("é o **usuário** quem digita o valor");
+    expect(pt).toContain("**usuário** digita o valor nela");
+    expect(pt).toContain("nunca altera nem sobrescreve");
+    const en = buildGuide("en");
+    expect(en).toContain("the **user** types the value");
+    expect(en).toContain("**user** types the value in it");
+    expect(en).toContain("never changes or overwrites");
   });
 
   it("covers the catalog, MCP groups and Full access", () => {

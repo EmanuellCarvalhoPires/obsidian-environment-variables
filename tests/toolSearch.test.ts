@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compileEndpoint, endpointOf, matchEndpoint, searchTools } from "../src/tools/toolSearch";
+import { compileEndpoint, EndpointPattern, endpointOf, matchEndpoint, searchTools, SearchResult } from "../src/tools/toolSearch";
 import { ToolEntry } from "../src/tools/types";
 
 const tool = (name: string, extra: Partial<ToolEntry> = {}): ToolEntry => ({
@@ -51,6 +51,43 @@ describe("tool search", () => {
     expect(out.results.map((r) => r.name)).toEqual(["jira_get_issue"]);
     const words = searchTools(tools, index, { query: "issue search" });
     expect(words.results.map((r) => r.name)).toEqual(["jira_search", "jira_get_issue"]);
-    expect(words.results[0].run).toEqual({ call: "run_vault_tool", arguments: { name: "jira_search", arguments: {} } });
+    expect((words.results[0] as SearchResult).run).toEqual({ call: "run_vault_tool", arguments: { name: "jira_search", arguments: {} } });
+  });
+
+  it("filters by mcp package name, app, or key", () => {
+    const tools = [
+      tool("jira_get_issue", { mcpName: "Jira Cloud", mcpKeys: ["jira cloud", "jira", "api/app/jira"] }),
+      tool("jsm_create_customer", { mcpName: "Jira Service Management", mcpKeys: ["jira service management", "jsm"] }),
+      tool("bitbucket_get_repo", { mcpName: "Bitbucket", mcpKeys: ["bitbucket"] }),
+    ];
+    const index: EndpointPattern[] = [];
+
+    // Listing whole MCP without query/name
+    const jiraList = searchTools(tools, index, { mcp: "Jira" });
+    expect(jiraList.results.map((r) => r.name)).toEqual(["jira_get_issue"]);
+    expect(jiraList.total).toBe(1);
+
+    // Filter by MCP with query
+    const jsmSearch = searchTools(tools, index, { mcp: "jsm", query: "customer" });
+    expect(jsmSearch.results.map((r) => r.name)).toEqual(["jsm_create_customer"]);
+
+    // Without criteria, returns available MCPs
+    const empty = searchTools(tools, index, {});
+    expect(empty.results).toEqual([]);
+    expect(empty.mcps).toEqual([
+      { mcp: "Bitbucket", tools: 1 },
+      { mcp: "Jira Cloud", tools: 1 },
+      { mcp: "Jira Service Management", tools: 1 },
+    ]);
+  });
+
+  it("finds a tool by exact name", () => {
+    const tools = [
+      tool("jira_get_issue", { title: "Get Issue" }),
+      tool("jira_get_issues_for_board", { title: "Get Board Issues" }),
+    ];
+    const out = searchTools(tools, [], { name: "jira_get_issue" });
+    expect(out.results.map((r) => r.name)).toEqual(["jira_get_issue"]);
+    expect((out.results[0] as SearchResult).title).toBe("Get Issue");
   });
 });

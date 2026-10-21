@@ -1,6 +1,6 @@
-import { SecretRecord } from "../store/types";
+import { SecretRecord, ValueRecord } from "../store/types";
 import { isLocalhost, urlAllowed } from "./hosts";
-import { findPlaceholders, hasPlaceholderLikeText, PlaceholderMatch, resolvePlaceholder } from "./placeholders";
+import { findPlaceholders, hasPlaceholderLikeText, PlaceholderMatch, resolvePlaceholder, resolveValuePlaceholder } from "./placeholders";
 
 export interface RequestInput {
   method?: string;
@@ -24,6 +24,10 @@ export interface PreparedRequest {
   headers: Record<string, string>;
   body?: string;
   usedSecrets: SecretRecord[];
+  /** Values (the "Values" section) used by the request. They share the placeholder syntax of secrets. */
+  usedValues: ValueRecord[];
+  /** Names of the used values whose allowed hosts do not cover this destination: the user must approve. */
+  valuesOutsideHosts: string[];
   placements: SecretPlacements;
   needsApproval: boolean;
   /**
@@ -60,10 +64,13 @@ const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 export type SecretLookup = (name: string) => SecretRecord | undefined;
 /** Per-client access control. Return false when the client may not use this secret. */
 export type SecretPermit = (secret: SecretRecord) => boolean;
+export type ValueLookup = (name: string) => ValueRecord | undefined;
 
 export interface PrepareRequestOptions {
   /** Allows placeholders in URL path/query and body regardless of secret.placement (used by SecretVaultService.request). */
   allowUrlAndBodyPlacement?: boolean;
+  /** Finds a value by name when no secret has it. Without it, placeholders resolve to secrets only. */
+  valueLookup?: ValueLookup;
 }
 
 export function prepareRequest(
@@ -97,6 +104,7 @@ export function prepareRequest(
 
   const display = displayTargetOf(target);
   const used = new Map<string, SecretRecord>();
+  const usedValues = new Map<string, ValueRecord>();
   const placements: SecretPlacements = { headers: false, url: false, body: false };
   const allowUrlAndBody = options?.allowUrlAndBodyPlacement === true;
 
@@ -107,7 +115,17 @@ export function prepareRequest(
     let out = "";
     let last = 0;
     for (const m of matches) {
-      const secret = lookupOrThrow(lookup, m);
+      const secret = lookup(m.name);
+      const entry = secret ? undefined : options?.valueLookup?.(m.name);
+      if (!secret && entry) {
+        // Values have no per-client access, placement flags or host list to enforce here: the final URL is checked below.
+        usedValues.set(entry.name, entry);
+        placements[where === "header" ? "headers" : where] = true;
+        out += text.slice(last, m.index) + resolveValuePlaceholder(m, entry);
+        last = m.index + m.raw.length;
+        continue;
+      }
+      if (!secret) throw unknownSecret(m);
       if (!permit(secret)) {
         throw new PolicyError(
           "secret_not_permitted",
@@ -138,12 +156,17 @@ export function prepareRequest(
   const body = input.body === undefined ? undefined : resolveIn(input.body, "body", url);
 
   const usedSecrets = [...used.values()];
+  const valuesUsed = [...usedValues.values()];
+  for (const v of valuesUsed) checkValueScheme(v, url);
+  const valuesOutsideHosts = valuesUsed.filter((v) => !valueDestinationAllowed(v, url)).map((v) => v.name);
   // A secret without a host list can be sent anywhere, so the user checks every destination.
-  const needsApproval = usedSecrets.some(
-    (s) =>
-      s.fullAccess !== true &&
-      (s.allowAnyHost === true || s.approval === "always" || (s.approval === "writes" && !READ_METHODS.has(method))),
-  );
+  const needsApproval =
+    valuesOutsideHosts.length > 0 ||
+    usedSecrets.some(
+      (s) =>
+        s.fullAccess !== true &&
+        (s.allowAnyHost === true || s.approval === "always" || (s.approval === "writes" && !READ_METHODS.has(method))),
+    );
   const origin = url.origin;
 
   return {
@@ -152,11 +175,13 @@ export function prepareRequest(
     headers,
     body,
     usedSecrets,
+    usedValues: valuesUsed,
+    valuesOutsideHosts,
     placements,
     needsApproval,
     displayTarget: display,
     redirectDecision(next: URL, status: number): RedirectDecision {
-      if (usedSecrets.length === 0) return "follow";
+      if (usedSecrets.length === 0 && valuesUsed.length === 0) return "follow";
       const sameOrigin = next.origin === origin;
       // A secret in the URL or in a body that 307/308 would re-send must never change origin.
       const bodyResent = status === 307 || status === 308;
@@ -166,6 +191,12 @@ export function prepareRequest(
       // Every secret must be allowed at the new destination (host, port, path prefix, scheme).
       for (const s of usedSecrets) {
         if (!destinationAllowed(s, next)) return "stop";
+      }
+      // A value the user approved for another host stays on that origin; one that was inside its hosts stays inside them.
+      for (const v of valuesUsed) {
+        const approved = valuesOutsideHosts.includes(v.name);
+        if (approved ? !sameOrigin : !valueDestinationAllowed(v, next)) return "stop";
+        if (next.protocol === "http:" && !isLocalhost(next)) return "stop";
       }
       return "follow";
     },
@@ -193,10 +224,24 @@ function assertWellFormed(text: string): void {
   }
 }
 
-function lookupOrThrow(lookup: SecretLookup, m: PlaceholderMatch): SecretRecord {
-  const secret = lookup(m.name);
-  if (!secret) throw new PolicyError("unknown_secret", `No variable named ${m.name}. Call list_secrets to see the available keys.`);
-  return secret;
+function unknownSecret(m: PlaceholderMatch): PolicyError {
+  return new PolicyError("unknown_secret", `No variable named ${m.name}. Call list_secrets to see the available keys.`);
+}
+
+/** Values go over https, or plain http only to localhost. */
+function checkValueScheme(value: ValueRecord, url: URL): void {
+  if (url.protocol === "http:" && !isLocalhost(url)) {
+    throw new PolicyError("insecure_scheme", `${value.name} can only be sent over https.`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new PolicyError("insecure_scheme", `Unsupported scheme ${url.protocol}`);
+  }
+}
+
+/** True when the destination is inside the value's own hosts. Any other host needs the user's approval. */
+export function valueDestinationAllowed(value: ValueRecord, url: URL): boolean {
+  if (value.allowedHosts.length === 0) return false;
+  return urlAllowed(url, value.allowedHosts);
 }
 
 function checkPlacement(secret: SecretRecord, where: "url" | "header" | "body"): void {

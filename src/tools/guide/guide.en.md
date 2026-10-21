@@ -14,7 +14,7 @@ You **do not change the plugin's code**. All configuration is done by creating a
    - search the vault for existing service, request and tool notes (by the tags `list_vault_tools` reports in `toolTag` and `requestTag`) and reuse what you can;
    - read the vault's conventions: instruction files such as `CLAUDE.md` or `AGENTS.md`, index notes (MOCs), the tag taxonomy and properties such as `up:`. Follow those conventions in the notes you create.
 3. **If any information is missing, ask the user before writing the plan.** Use the list in section 3. Ask all questions at once, numbered. **Never invent values**: URLs, IDs, secret names, scopes, field names or endpoints you have not confirmed in the official documentation or with the user.
-4. **Never ask for, read, write or log the value of a token, password or key.** If a secret does not exist yet, the user creates it in the plugin's panel in Obsidian (key icon → "New variable"). You only use its name in placeholders such as `{{basic:NAME}}`.
+4. **Never ask for, read, write or log the value of a token, password or key.** If a secret does not exist yet, you can open the create screen for the user with the `env_criar_secret` tool (suggest only `nome_sugerido`, `tipo_sugerido`, `dominios_sugeridos` and `descricao`): the **user** types the value, and you only receive `Secret NAME criada`, `cancelado` or `expirado`. It only creates: it never changes or overwrites a variable or value that already exists (if the name exists, pick another one) and it never turns on "Full access" or "Allow any host". If the tool does not exist, the user creates it in the plugin's panel in Obsidian (key icon → "New variable"). You only use its name in placeholders such as `{{basic:NAME}}`. The **Values** section of the panel (configuration text such as a project key, an address or a JSON, which use the same `{{secret:NAME}}` key) belongs to the user alone: you do not create values.
 5. **The notes you create are generic.** Every value of an instance or account (URL, IDs, secret placeholder) lives **only in the service note of that instance**, one note per instance. Request and tool notes **never** hold those values: they use `{{service.<property>}}` and receive the values of the instance chosen in the call. Create **one** generic tool with `service_tag` and `service_param` (section 4.3), never one tool per instance. This applies even when there is only one instance today: a new instance then works with just a new service note.
 6. **Always produce an Implementation Plan**, using the template in section 8, and **wait for the user's explicit approval** before creating or editing any note. If the user asks for changes, update the plan and ask for approval again.
 7. **After implementing, validate:** call `list_vault_tools` until no new tool has `problems`. Only test read-only tools. A tool that writes data (`writes: true`) may only run with the user's explicit permission for that run.
@@ -46,7 +46,7 @@ Prefer `kind: request`. Use `kind: script` only when the tool needs to combine s
 2. **Documentation:** link to the official API documentation, or the exact endpoints to use.
 3. **Base URL** of the API.
 4. **Authentication:** API key, Basic (user or e-mail + token), Bearer/Personal Access Token or OAuth 2.0. Read section 7 before planning OAuth.
-5. **Secret:** if it already exists in this vault's `list_secrets`, which one, and whether its allowed hosts include the API host. If not, the name the user will create, its type and allowed hosts.
+5. **Secret:** if it already exists in this vault's `list_secrets`, which one, and whether its allowed hosts include the API host. If not, the name, type and allowed hosts you will suggest in `env_criar_secret` for the user to create.
 6. **Operations:** the list of actions the user wants (e.g. list files, get a file, create a folder) and **which ones write data**.
 7. **Parameters** of each operation: name, type, required or not, allowed values.
 8. **Expected result:** is the raw API response enough, or must it be summarized, filtered or paginated (this decides between `request` and `script`).
@@ -269,7 +269,7 @@ Vault and MCP server used. Service, instances, base URL, documentation used and 
 
 ## 3. Authentication
 Secret used (name and type), whether it exists or the user must create it, and the allowed hosts needed.
-User action needed: <e.g. create the secret GDRIVE_KEY of type token for the host www.googleapis.com>.
+User action needed: <e.g. create the secret GDRIVE_KEY of type token for the host www.googleapis.com (in the screen `env_criar_secret` opens)>.
 
 ## 4. Notes to create or change
 | Note | Kind (service/request/tool) | Create/change | Tags and links (up:, MOC) |
