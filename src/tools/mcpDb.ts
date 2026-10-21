@@ -3,6 +3,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { App, FileSystemAdapter, normalizePath, TFile } from "obsidian";
+import { normalizeMcpKey, packageFolder } from "./toolSearch";
 import { ToolEntry, VaultNote } from "./types";
 
 export interface McpDbToolRow {
@@ -96,11 +97,18 @@ export class McpDbManager {
         const db = new DatabaseSync(fullPath, { readOnly: true });
         this.dbs.set(file.path, db);
 
+        // Package identity, used by the `mcp` filter of search_vault_tools.
+        const pkg = readPackage(db);
+        const folder = packageFolder(file.path);
+        const mcpName = pkg?.name || pkg?.app || folder || file.basename;
+        const mcpKeys = packageKeys(pkg, folder, file.basename);
+
         // Read all tools
         const toolRows = db.prepare("SELECT * FROM tools").all() as unknown as McpDbToolRow[];
         for (const row of toolRows) {
+          if (this.toolsByName.has(row.id)) continue;
           const tags = row.tags ? (JSON.parse(row.tags) as string[]) : [];
-          const params = row.params_schema ? JSON.parse(row.params_schema) : {};
+          const params = (row.params_schema ? JSON.parse(row.params_schema) : {}) as ToolEntry["params"];
           const writes = tags.some((t) => t.includes("write") || t.includes("create") || t.includes("delete") || t.includes("update"));
 
           const entry: ToolEntry = {
@@ -110,13 +118,17 @@ export class McpDbManager {
             kind: row.kind === "script" ? "script" : "request",
             params,
             writes,
-            expose: true,
+            // Package tools stay out of the client's tool list (there are hundreds of them):
+            // the AI finds them with search_vault_tools and runs them with run_vault_tool.
+            expose: false,
             notePath: file.path,
             noteName: row.title,
             request: row.request_id ?? undefined,
             serviceTag: row.service_tag ?? undefined,
             serviceParam: row.service_param ?? undefined,
             serviceExcludeTag: row.service_exclude_tag ?? undefined,
+            mcpName,
+            mcpKeys,
             status: "ready",
             problems: [],
             warnings: [],
@@ -221,4 +233,29 @@ export class McpDbManager {
 
     return results;
   }
+}
+
+interface PackageIdentity {
+  id: string;
+  name: string;
+  app: string;
+  tag: string;
+}
+
+/** The mcp_package row of a database, or undefined for databases without one. */
+function readPackage(db: DatabaseSync): PackageIdentity | undefined {
+  try {
+    const row = db.prepare("SELECT id, name, app, tag FROM mcp_package LIMIT 1").get() as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    const text = (v: unknown) => (typeof v === "string" ? v : "");
+    return { id: text(row.id), name: text(row.name), app: text(row.app), tag: text(row.tag) };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every name the package answers to, normalized: id, name, app, last segment of the tag, folder, file name. */
+function packageKeys(pkg: PackageIdentity | undefined, folder: string | undefined, basename: string): string[] {
+  const raw = [pkg?.id, pkg?.name, pkg?.app, pkg?.tag ? pkg.tag.split("/").pop() : undefined, folder, basename === "mcp" ? undefined : basename];
+  return [...new Set(raw.filter((k): k is string => !!k).map(normalizeMcpKey).filter(Boolean))];
 }

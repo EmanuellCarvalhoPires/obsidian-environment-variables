@@ -115,7 +115,7 @@ describe("vault tools over MCP", () => {
 
   it("lists built-in, management and exposed vault tools", async () => {
     const names = (await rpc("tools/list")).result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(["list_secrets", "http_request", "get_tool_authoring_guide", "list_vault_tools", "search_vault_tools", "run_vault_tool", "item_digest", "get_item"]); // vault tools sorted by note path
+    expect(names).toEqual(["list_secrets", "http_request", "get_tool_authoring_guide", "list_vault_tools", "search_vault_tools", "list_tools", "run_vault_tool", "item_digest", "get_item"]); // vault tools sorted by note path
     const getItem = (await rpc("tools/list")).result.tools.find((t: { name: string }) => t.name === "get_item");
     expect(getItem.inputSchema).toMatchObject({ required: ["id"], properties: { id: { type: "string" } } });
     expect(getItem.annotations.readOnlyHint).toBe(true);

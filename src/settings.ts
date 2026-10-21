@@ -30,6 +30,11 @@ export interface Settings {
   language: LanguageSetting;
   /** Base raw URL of the repo the "Download MCP" screen reads its catalog from. */
   mcpCatalogUrl: string;
+  /**
+   * Vault folder where the tool notes live, shared with AI Ecosystem's hooks so Grep stays allowed there.
+   * Empty: worked out from where the tool notes are.
+   */
+  toolNotesFolder: string;
 }
 
 export type LanguageSetting = "auto" | "en" | "pt-BR";
@@ -53,12 +58,14 @@ export const DEFAULT_SETTINGS: Settings = {
   scriptTimeoutSeconds: 30,
   language: "auto",
   mcpCatalogUrl: DEFAULT_MCP_CATALOG_URL,
+  toolNotesFolder: "",
 };
 
 /** Name and type of a variable: enough to write a reference, never the value. */
 export interface NameEntry {
   name: string;
-  type: SecretType;
+  /** "value" marks an entry of the Values section. */
+  type: SecretType | "value";
 }
 
 /** Contents of data.json. Holds no secret values. */
@@ -76,6 +83,10 @@ export interface PluginData {
   settingsRevision: number;
   /** Ids of the bundled instance templates already created once (see serviceTemplates.ts). */
   createdTemplates: string[];
+  /** Host patterns of the secrets and values (hosts only), so the terminal hook still knows them while the vault is locked. */
+  hostIndex: string[];
+  /** Hosts for the services named during the guided set-up: only suggestions for env_criar_secret. */
+  serviceHosts: string[];
 }
 
 /** Auto-lock used to be on (15 minutes) by default. */
@@ -100,5 +111,7 @@ export function withDefaults(raw: Partial<PluginData> | null | undefined): Plugi
       : [],
     mcpApps: Array.isArray(raw?.mcpApps) ? raw.mcpApps.filter((a): a is McpAppConfig => typeof a?.id === "string" && typeof a?.name === "string") : [],
     createdTemplates: Array.isArray(raw?.createdTemplates) ? raw.createdTemplates.filter((id): id is string => typeof id === "string") : [],
+    hostIndex: Array.isArray(raw?.hostIndex) ? raw.hostIndex.filter((h): h is string => typeof h === "string") : [],
+    serviceHosts: Array.isArray(raw?.serviceHosts) ? raw.serviceHosts.filter((h): h is string => typeof h === "string") : [],
   };
 }

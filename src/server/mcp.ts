@@ -12,7 +12,7 @@ export const SERVER_INSTRUCTIONS =
   "Use http_request with {{secret:NAME}}, {{basic:NAME}} or {{bearer:NAME}} in headers to call APIs.";
 
 export const TOOLS_INSTRUCTIONS =
-  " Before using http_request, call search_vault_tools with the method and URL (or keywords) to find a vault tool for that endpoint, and run it as shown in its `run` field (directly if exposed, or via run_vault_tool). Use http_request only when no vault tool fits. " +
+  " Most vault tools (MCP packages such as Jira, Jira Service Management, Confluence and Bitbucket) are not in your tool list. To find one, call search_vault_tools with mcp (package), name (exact tool name), query (keywords) and/or the method and URL of the endpoint; call it without arguments to see the available MCPs. Run the tool as shown in its `run` field (directly if exposed, or via run_vault_tool). Use http_request only when no vault tool fits. " +
   "Before creating, editing or explaining vault tools (MCP tools defined as Markdown notes in the Obsidian vault), call get_tool_authoring_guide and follow its workflow: ask the user for missing information, write an implementation plan, and wait for approval.";
 
 export const PROMPTS = [

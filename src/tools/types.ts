@@ -69,6 +69,10 @@ export interface ToolEntry {
   serviceChoices?: ServiceChoice[];
   /** kind: script — the code of the ```js block. */
   code?: string;
+  /** MCP package the tool belongs to (e.g. "Jira Cloud"), set for tools loaded from an mcp.db file. */
+  mcpName?: string;
+  /** Names the package answers to in the `mcp` filter of search_vault_tools (package id, name, app, tag, folder). */
+  mcpKeys?: string[];
   status: ToolStatus;
   problems: string[];
   warnings: string[];
@@ -93,6 +97,7 @@ export const RESERVED_TOOL_NAMES = new Set([
   "list_vault_tools",
   "run_vault_tool",
   "search_vault_tools",
+  "list_tools",
 ]);
 
 export type ToolErrorCode =

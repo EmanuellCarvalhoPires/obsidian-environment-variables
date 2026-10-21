@@ -49,6 +49,17 @@ Already have tokens in your notes? Select one and run **Convert selection into a
 | `{{basic:NAME}}` | `Basic base64(username:token)` |
 | `{{bearer:NAME}}` | `Bearer <token>` |
 
+### Values
+
+Not everything an agent needs is a credential. The **Values** section of the panel keeps configuration text (a project key, an address, an e-mail, a number, a JSON) next to your variables:
+
+- Each value has a name, a kind (text, number, URL, e-mail, JSON or password), the text, a description and optional allowed hosts.
+- It uses the **same key** as a variable, `{{secret:NAME}}`, and shares its names: a name is unique across variables and values, and nothing is ever overwritten.
+- It is replaced only in `http_request` (headers, URL and body), in script environments and arguments, and in template data. Anywhere else the key stays as written.
+- A request that sends a value to a host outside its allowed hosts (or a value with no hosts) waits for your approval, like any-host variables.
+- Values of 6 characters or more are masked in responses and logs. Shorter ones are stored and work, but the form warns you they will not be masked.
+- The panel lists values without their text. You create and remove them there; an agent cannot create values.
+
 ## Connecting an AI client
 
 ### One click: Claude Code, Codex, Antigravity and Cursor
@@ -80,6 +91,7 @@ Add an HTTP MCP server at `http://127.0.0.1:<port>/mcp` with the header `Authori
 
 - `list_secrets`: names, types, descriptions and allowed hosts. Never values.
 - `http_request`: `{ method, url, headers, body }` with keys in header values.
+- `env_criar_secret` (with AI Ecosystem): `{ nome_sugerido, tipo_sugerido, dominios_sugeridos, descricao }`. Opens the panel's **New variable** form in Obsidian, filled with those suggestions, for **you** to type the value. The agent only learns `Secret NAME criada`, `cancelado` (you closed it) or `expirado` (5 minutes passed); it never receives the value, and it rejects a `valor` argument. It only creates: if the name is already used by a variable or a value, **Save** is disabled, and the suggestions never turn on **Full access** or **Allow any host**. It needs the vault unlocked.
 
 ### Scripts (REST)
 
@@ -159,7 +171,7 @@ When the plugin is installed, it creates one instance (service note) template fo
 You do not need to write these notes yourself. Ask your AI agent, for example *"create tools to list and search files in Google Drive"*:
 
 - The **authoring guide** comes as one prompt, **Set up the MCP environment**. It sets everything up from scratch or completes what is missing (AI client, vault tools, ready-made packages from **Download MCP**, environment variables, service, request and tool notes, MCP groups) and, after asking your permission, writes the plugin's rules into the vault's `CLAUDE.md` so later conversations follow them. It also adds one or several tools to an app the vault already has, reusing its service notes and variables. Clients connected to the plugin get it through the `configure_vault_tools` MCP prompt and the `get_tool_authoring_guide` tool. You can also copy it from the panel (**Vault tools → Prompt for AI agents**) or with the **Copy the AI agent prompt** command, and paste it into any agent.
-- The prompt is generic and the same on any computer: it names no vault, folder, tag, MCP server, secret or tool of the user. The agent finds those out with `list_vault_tools` and `list_secrets`. It ends with a mandatory question (which environment variables, for which app or service and which tools), and the agent must not create anything until it has the answer.
+- The prompt is generic and the same on any computer: it names no vault, folder, tag, MCP server, secret or tool of the user. The agent finds those out with `list_vault_tools` and `list_secrets`. It ends with a mandatory question (which environment variables, for which app or service and which tools), and the agent must not create anything until it has the answer. For each variable the agent opens the create screen (`env_criar_secret`) and you type the value there; it never passes through the agent.
 - The guide explains the note formats and rules, and it requires the agent to **survey what exists, ask you for any missing information, write an implementation plan in a fixed template and wait for your approval** before it creates or edits notes. It then validates its work with `list_vault_tools` and tests the read-only tools.
 - `search_vault_tools` finds the tool for a task, hidden ones too: pass the method and URL you would send with `http_request` (or keywords) and it returns the matching tools with how to run each one. When `http_request` calls an endpoint a vault tool covers, its response carries a `vault_tool_hint` pointing to that tool, and the server instructions tell agents to search before using `http_request`.
 - `run_vault_tool` runs any tool by name, including tools with `expose: false` and tools created after the client loaded its list. The same is available over REST: `GET /v1/tools`, `POST /v1/tools/<name>`, `GET /v1/tools/guide`.
@@ -206,6 +218,7 @@ The panel never shows a value, only names: every line goes through the same mask
 - **Approval:** by default, requests that change data (POST, PUT, PATCH, DELETE) wait for your approval in Obsidian.
 - **Local server:** listens only on `127.0.0.1`, requires a client token, rejects requests from web browsers (Origin header) and foreign Host headers (DNS rebinding). The server is off until you turn it on.
 - **Vault tools** go through the same broker as `http_request`: allowed hosts, placement, masking and per-client access still apply, with the caller's own access. The per-variable approval is skipped for tool requests, any-host variables included: the AI client asks for permission, and the agent guide requires it to ask before every run that uses an any-host variable. Tool arguments may not contain secret placeholders; only service and request notes can. Script tools run sandboxed in QuickJS (no network, no Node.js). Permission to run a tool is asked by the AI client, not by the plugin.
+- **No secret is created, changed or deleted from the AI side.** The REST routes and MCP tools are read-only for secrets and values (`list_secrets` returns metadata only). The one way an agent can bring a new variable in is `env_criar_secret`, which opens the form for you to fill: it only creates, never overwrites, and the value never passes through the agent, the log or the activity feed. In-process modules of AI Ecosystem can also hand a plaintext token over to the vault through the `secrets` service (secret adoption), which never overwrites either.
 - **Usage log:** every use is logged with time, client, key names, method, URL without query string and status. Values are never logged.
 
 ### Limits
