@@ -46,9 +46,15 @@ export interface HubRoute {
   handler: (req: HubRequest) => Promise<HubResponse> | HubResponse;
 }
 
+/** Which kind of AI client made the call, as detected by AI Ecosystem. */
+export type HubClientKind = "claude-code" | "antigravity" | "other";
+
 export interface HubCallContext {
   client: EcosystemClientContext;
   moduleId: string;
+  /** Aborted when the client cancels the call or closes the connection before the answer. Used by tools that open a screen. */
+  signal?: AbortSignal;
+  clientKind?: HubClientKind;
 }
 
 export interface HubToolContent {
@@ -77,6 +83,8 @@ export interface HubTool {
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   annotations?: HubToolAnnotations;
+  /** Stays visible while the module still waits for its set-up skill (AI Ecosystem hides the other tools of such a module). */
+  availableDuringSetup?: boolean;
   handler: (args: Record<string, unknown>, ctx: HubCallContext) => Promise<HubToolResult> | HubToolResult;
 }
 
@@ -151,6 +159,37 @@ export interface AIEcosystemAPI {
   getServerStatus(): { running: boolean; port: number; usingAlternativePort: boolean };
   importClients(clients: EcosystemClientRecord[], sourceModuleId: string): Promise<{ added: number; total: number }>;
   logActivity(entry: EcosystemActivityInput): void;
+}
+
+// ---------- `hooks` service (owned by AI Ecosystem) ----------
+
+export const HOOKS_SERVICE = "hooks";
+
+export interface HookRuleData {
+  /** environment-variables: allowed host patterns of secrets WITHOUT full access / any host. */
+  hosts?: string[];
+  /** ai-scripts: vault-relative folders whose scripts must run through the plugin. */
+  scriptFolders?: string[];
+  /** ai-templates: vault-relative target path patterns of the templates ({{...}} becomes *). */
+  templateTargets?: string[];
+  /** environment-variables: vault-relative folders of tool notes (Grep stays allowed there). */
+  toolNoteFolders?: string[];
+}
+
+export interface SetupHandler {
+  /** Facts the module detects by itself (never secret values). */
+  detect?(): Promise<Record<string, unknown>>;
+  /** Applies one answer. Returns an error message to refuse it. */
+  save?(key: string, value: unknown): Promise<string | void>;
+  /** Called by ecosystem_setup_complete. ok:false blocks completion and lists what is missing. */
+  validate?(): Promise<{ ok: boolean; missing?: string[] }>;
+}
+
+export interface HooksService {
+  setRuleData(moduleId: string, data: HookRuleData): void;
+  /** Returns an unregister function. */
+  registerSetupHandler(moduleId: string, handler: SetupHandler): () => void;
+  getModuleState(moduleId: string): "pendente_configuracao" | "configurado" | "desativado" | undefined;
 }
 
 interface PluginsBag {

@@ -4,6 +4,7 @@
 // against the vault every time, like the generic tools' service_tag.
 
 import type { AuditEntry } from "../audit/auditLog";
+import { normalizeMcpKey } from "./toolSearch";
 import { NoteSource, ToolEntry } from "./types";
 
 export const MCP_GROUP_NAME_MAX = 60;
@@ -74,6 +75,12 @@ export function matchedTools(config: Pick<McpGroupConfig, "tag" | "links">, entr
 /** Adds the tool count and the request count (from the audit log) to a group. Reads nothing. */
 export function computeMcpGroupStats(config: McpGroupConfig, entries: ToolEntry[], source: NoteSource, audit: AuditEntry[]): McpGroupStats {
   const tools = matchedTools(config, entries, source);
+  // Tools loaded from a downloaded package (mcp.db) have no note: they belong to the group by package id.
+  if (config.sourcePackageId) {
+    const key = normalizeMcpKey(config.sourcePackageId);
+    const seen = new Set(tools.map((e) => e.name));
+    for (const e of entries) if (!seen.has(e.name) && e.mcpKeys?.includes(key)) tools.push(e);
+  }
   const names = new Set(tools.map((e) => e.name));
   const requestCount = audit.filter((a) => a.action === "tool" && a.tool !== undefined && names.has(a.tool)).length;
   return { ...config, toolCount: tools.length, requestCount, toolNames: tools.map((e) => e.name) };

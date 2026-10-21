@@ -1,5 +1,5 @@
 import { decryptVault, deriveKey, DerivedKey, DEFAULT_KDF, encryptPayload, KdfParams, kdfProvider } from "../crypto/vaultFile";
-import { SECRET_NAME_PATTERN, SecretRecord, VaultPayload } from "./types";
+import { SECRET_NAME_PATTERN, SecretRecord, ValueRecord, VALUE_KINDS, valueMatchesKind, VaultPayload } from "./types";
 
 /** Where the encrypted file lives. The plugin uses the vault adapter; tests use memory. */
 export interface VaultIO {
@@ -17,12 +17,14 @@ export class VaultLockedError extends Error {
 export const MIN_PASSWORD_LENGTH = 12;
 
 export type SecretInput = Omit<SecretRecord, "id" | "createdAt" | "updatedAt" | "lastUsedAt">;
+export type ValueInput = Omit<ValueRecord, "id" | "createdAt" | "updatedAt" | "lastUsedAt">;
 
 type Listener = () => void;
 
 export class SecretStore {
   private derived: DerivedKey | null = null;
   private secrets: SecretRecord[] = [];
+  private values: ValueRecord[] = [];
   private listeners = new Set<Listener>();
 
   /**
@@ -57,6 +59,7 @@ export class SecretStore {
     assertPassword(password);
     this.derived = await deriveKey(password, this.kdfOptions());
     this.secrets = [];
+    this.values = [];
     await this.persist();
     this.emit();
   }
@@ -67,6 +70,7 @@ export class SecretStore {
     const { payload, derived, needsUpgrade } = await decryptVault<VaultPayload>(text, password);
     this.derived = derived;
     this.secrets = Array.isArray(payload.secrets) ? payload.secrets : [];
+    this.values = Array.isArray(payload.values) ? payload.values : [];
     // Re-save older files in the current format (same key, new header bound to the ciphertext).
     if (needsUpgrade) await this.persist();
     this.emit();
@@ -90,6 +94,13 @@ export class SecretStore {
     }
     this.secrets.length = 0;
     this.secrets = [];
+    for (const v of this.values) {
+      v.value = "";
+      v.description = "";
+      v.allowedHosts.length = 0;
+    }
+    this.values.length = 0;
+    this.values = [];
     this.emit();
   }
 
@@ -113,6 +124,50 @@ export class SecretStore {
     return this.isUnlocked ? this.secrets.map((s) => s.name).sort() : [];
   }
 
+  /** True when a secret or a value already uses this name: the two share one namespace. */
+  nameExists(name: string): boolean {
+    this.assertUnlocked();
+    return this.secrets.some((s) => s.name === name) || this.values.some((v) => v.name === name);
+  }
+
+  listValues(): ValueRecord[] {
+    this.assertUnlocked();
+    return [...this.values].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  getValue(name: string): ValueRecord | undefined {
+    this.assertUnlocked();
+    return this.values.find((v) => v.name === name);
+  }
+
+  /** Creates a value. Never overwrites: an existing name (secret or value) is an error. */
+  async addValue(input: ValueInput): Promise<ValueRecord> {
+    this.assertUnlocked();
+    validateValueInput(input);
+    if (this.nameExists(input.name)) throw new Error(`A variable named ${input.name} already exists.`);
+    const now = new Date().toISOString();
+    const record: ValueRecord = { ...input, allowedHosts: [...input.allowedHosts], id: newId(), createdAt: now, updatedAt: now };
+    this.values.push(record);
+    await this.persist();
+    this.emit();
+    return record;
+  }
+
+  async removeValue(id: string): Promise<void> {
+    this.assertUnlocked();
+    for (const v of this.values) if (v.id === id) v.value = "";
+    this.values = this.values.filter((v) => v.id !== id);
+    await this.persist();
+    this.emit();
+  }
+
+  async markValuesUsed(names: string[]): Promise<void> {
+    if (!this.isUnlocked || names.length === 0) return;
+    const now = new Date().toISOString();
+    for (const v of this.values) if (names.includes(v.name)) v.lastUsedAt = now;
+    await this.persist();
+  }
+
   get(name: string): SecretRecord | undefined {
     this.assertUnlocked();
     return this.secrets.find((s) => s.name === name);
@@ -121,7 +176,7 @@ export class SecretStore {
   async add(input: SecretInput): Promise<SecretRecord> {
     this.assertUnlocked();
     validateInput(input);
-    if (this.secrets.some((s) => s.name === input.name)) throw new Error(`A variable named ${input.name} already exists.`);
+    if (this.nameExists(input.name)) throw new Error(`A variable named ${input.name} already exists.`);
     const now = new Date().toISOString();
     const record: SecretRecord = { ...input, id: newId(), createdAt: now, updatedAt: now };
     this.secrets.push(record);
@@ -139,7 +194,9 @@ export class SecretStore {
     const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
     const next: SecretRecord = { ...current, ...defined, id: current.id, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
     validateInput(next);
-    if (this.secrets.some((s) => s.id !== id && s.name === next.name)) throw new Error(`A variable named ${next.name} already exists.`);
+    if (this.secrets.some((s) => s.id !== id && s.name === next.name) || this.values.some((v) => v.name === next.name)) {
+      throw new Error(`A variable named ${next.name} already exists.`);
+    }
     this.secrets[index] = next;
     if (current.value !== next.value) current.value = ""; // drop the old value from the replaced record
     await this.persist();
@@ -178,7 +235,7 @@ export class SecretStore {
 
   private async persist(): Promise<void> {
     if (!this.derived) throw new VaultLockedError();
-    const payload: VaultPayload = { secrets: this.secrets };
+    const payload: VaultPayload = { secrets: this.secrets, values: this.values };
     await this.io.write(await encryptPayload(payload, this.derived));
   }
 }
@@ -209,6 +266,15 @@ function validateInput(input: SecretInput): void {
   }
   if (!input.value) throw new Error("The value cannot be empty.");
   if (input.type === "basic" && !input.username) throw new Error("The basic type needs a username or e-mail.");
+}
+
+function validateValueInput(input: ValueInput): void {
+  if (!SECRET_NAME_PATTERN.test(input.name)) {
+    throw new Error("Name must start with a letter or underscore and contain only letters, digits and underscore (max 64).");
+  }
+  if (!input.value || input.value.trim() === "") throw new Error("The value cannot be empty.");
+  if (!VALUE_KINDS.includes(input.kind)) throw new Error(`Unknown kind of value: ${String(input.kind)}.`);
+  if (!valueMatchesKind(input.kind, input.value)) throw new Error(`The text is not valid for the kind "${input.kind}".`);
 }
 
 function newId(): string {

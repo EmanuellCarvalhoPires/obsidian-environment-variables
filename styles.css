@@ -768,3 +768,16 @@
   align-items: center;
   gap: var(--size-4-2);
 }
+
+.ev-tools-wrap {
+  max-height: 560px;
+}
+
+.ev-tools td {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.ev-tools-actions {
+  white-space: nowrap;
+}

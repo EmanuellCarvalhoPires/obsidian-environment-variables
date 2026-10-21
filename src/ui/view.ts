@@ -1,13 +1,14 @@
 import { ItemView, Notice, setIcon, Setting, setTooltip, ToggleComponent, WorkspaceLeaf } from "obsidian";
+import { AuditEntry } from "../audit/auditLog";
 import { WrongPasswordError } from "../crypto/vaultFile";
 import { t } from "../i18n";
 import { Integration, IntegrationId, INTEGRATIONS } from "../integrations/integrations";
 import type EnvironmentVariablesPlugin from "../main";
 import { MIN_PASSWORD_LENGTH, passwordStrength } from "../store/secretStore";
-import { SecretRecord } from "../store/types";
+import { SecretRecord, ValueRecord } from "../store/types";
 import { wildcardRisk } from "../secrets/hosts";
 import { accessOf, ClientAccess, ClientRecord } from "../server/clients";
-import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal } from "./modals";
+import { AccessModal, ClientTokenModal, ConfirmModal, hostsLabel, PromptModal, referenceFor, SecretModal, ValueModal } from "./modals";
 import { McpAppConfig, McpGroupConfig, McpGroupStats, newMcpApp, newMcpGroup } from "../tools/mcpGroups";
 import { ToolEntry } from "../tools/types";
 import { iconLine } from "./dom";
@@ -180,6 +181,7 @@ export class EnvironmentVariablesView extends ItemView {
   private renderUnlocked(root: HTMLElement): void {
     this.renderServerHeader(root);
     this.renderSecrets(root);
+    this.renderValues(root);
     this.renderMcp(root);
     this.renderMcpGroups(root);
     this.renderLog(root);
@@ -286,6 +288,55 @@ export class EnvironmentVariablesView extends ItemView {
     );
   }
 
+  // ---------- Values ----------
+
+  /** The Values section: configuration text that shares the {{secret:NAME}} key. The text itself is never listed. */
+  private renderValues(root: HTMLElement): void {
+    const section = root.createDiv({ cls: "ev-section" });
+    const heading = sectionHeading(section, t("view.section.values"));
+    heading.setDesc(t("view.values.desc"));
+    heading.addButton((b) =>
+      b
+        .setButtonText(t("view.values.new"))
+        .setCta()
+        .onClick(() => new ValueModal(this.app, this.plugin.store).open()),
+    );
+
+    const list = section.createDiv({ cls: "ev-rows" });
+    const values = this.plugin.store.listValues();
+    if (values.length === 0) {
+      list.createDiv({ text: t("view.values.empty"), cls: "ev-muted ev-empty" });
+      return;
+    }
+    for (const value of values) this.renderValueItem(list, value);
+  }
+
+  private renderValueItem(list: HTMLElement, value: ValueRecord): void {
+    const row = new Setting(list).setClass("ev-row");
+    const name = row.nameEl.createSpan({ text: value.name, cls: "ev-item-name" });
+    row.nameEl.createSpan({ text: t(`valueKind.${value.kind}`), cls: "ev-badge" });
+    const lastUsed = `${t("view.col.lastUsed")}: ${value.lastUsedAt ? new Date(value.lastUsedAt).toLocaleString() : t("view.never")}`;
+    setTooltip(name, value.description ? `${value.description}\n${lastUsed}` : lastUsed);
+    row.descEl.createSpan({
+      text: value.allowedHosts.length ? value.allowedHosts.join(", ") : t("view.values.noHosts"),
+      cls: value.allowedHosts.length ? "" : "ev-warning",
+    });
+
+    row.addExtraButton((b) =>
+      b.setIcon("copy").setTooltip(t("view.copyKey")).onClick(() => {
+        const ref = referenceFor({ name: value.name, type: "value" });
+        void navigator.clipboard.writeText(ref);
+        new Notice(t("view.copied", { key: ref }));
+      }),
+    );
+    row.addExtraButton((b) =>
+      b
+        .setIcon("trash-2")
+        .setTooltip(t("view.delete"))
+        .onClick(() => new ConfirmModal(this.app, t("view.values.deleteConfirm", { name: value.name }), () => this.plugin.store.removeValue(value.id)).open()),
+    );
+  }
+
   // ---------- Local MCP Settings ----------
 
   private renderMcp(root: HTMLElement): void {
@@ -352,7 +403,38 @@ export class EnvironmentVariablesView extends ItemView {
       body.createDiv({ text: t("view.tools.empty", { tag: settings.toolTag }), cls: "ev-muted ev-empty" });
       return;
     }
-    for (const entry of entries) this.renderTool(body, entry);
+    this.renderToolTable(body, entries);
+  }
+
+  /** One table row per tool: with thousands of tools (mcp.db packages) a row of settings controls per tool is too heavy. */
+  private renderToolTable(body: HTMLElement, entries: ToolEntry[]): void {
+    const wrap = body.createDiv({ cls: "ev-log-wrap ev-tools-wrap" });
+    const table = wrap.createEl("table", { cls: "ev-log ev-tools" });
+    const head = table.createEl("thead").createEl("tr");
+    for (const col of ["name", "package", "kind", "status", "flags", "problems", "actions"] as const) head.createEl("th", { text: t(`view.tools.col.${col}`) });
+    const tbody = table.createEl("tbody");
+    for (const entry of entries) {
+      const tr = tbody.createEl("tr");
+      tr.createEl("td", { cls: "ev-item-name", text: entry.name, attr: entry.description ? { title: entry.description } : {} });
+      tr.createEl("td", { text: entry.mcpName ?? "" });
+      tr.createEl("td", { text: entry.kind ?? "" });
+      tr.createEl("td", { text: t(`status.${entry.status}`), cls: `ev-status-${entry.status}` });
+      const flags = tr.createEl("td");
+      if (entry.writes) flags.createSpan({ text: t("view.tools.writes"), cls: "ev-badge ev-warning" });
+      if (!entry.expose) flags.createSpan({ text: t("view.tools.hidden"), cls: "ev-badge" });
+      const problems = tr.createEl("td");
+      for (const p of entry.problems) iconLine(problems, "x-circle", p, "ev-error");
+      for (const w of entry.warnings) iconLine(problems, "alert-triangle", w, "ev-warning");
+      const actions = tr.createEl("td", { cls: "ev-tools-actions" });
+      const open = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.tools.open") } });
+      setIcon(open, "file-text");
+      open.addEventListener("click", () => void this.app.workspace.openLinkText(entry.notePath, "", false));
+      if (entry.status === "ready") {
+        const run = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.tools.run") } });
+        setIcon(run, "play");
+        run.addEventListener("click", () => new ToolRunModal(this.app, entry, (args) => this.plugin.tools.run(entry.name, args, this.plugin.localClient)).open());
+      }
+    }
   }
 
   private renderPrompt(body: HTMLElement): void {
@@ -372,27 +454,6 @@ export class EnvironmentVariablesView extends ItemView {
       .addButton((b) => b.setButtonText(t("view.tools.copy")).setCta().onClick(() => this.plugin.copyAgentGuide()));
     setTooltip(row.nameEl, t("view.tools.prompt.setupDesc"));
     if (shown) body.createEl("pre", { text: this.plugin.agentGuide(), cls: "ev-tool-guide" });
-  }
-
-  private renderTool(body: HTMLElement, entry: ToolEntry): void {
-    const row = new Setting(body).setClass("ev-row");
-    row.nameEl.createSpan({ text: entry.name, cls: "ev-item-name", attr: entry.description ? { title: entry.description } : {} });
-    if (entry.kind) row.nameEl.createSpan({ text: entry.kind, cls: "ev-badge" });
-    row.nameEl.createSpan({ text: t(`status.${entry.status}`), cls: `ev-badge ev-status-${entry.status}` });
-    if (entry.writes) row.nameEl.createSpan({ text: t("view.tools.writes"), cls: "ev-badge ev-warning" });
-    if (!entry.expose) row.nameEl.createSpan({ text: t("view.tools.hidden"), cls: "ev-badge" });
-    for (const p of entry.problems) iconLine(row.descEl, "x-circle", p, "ev-error");
-    for (const w of entry.warnings) iconLine(row.descEl, "alert-triangle", w, "ev-warning");
-
-    row.addExtraButton((b) => b.setIcon("file-text").setTooltip(t("view.tools.open")).onClick(() => void this.app.workspace.openLinkText(entry.notePath, "", false)));
-    if (entry.status === "ready") {
-      row.addExtraButton((b) =>
-        b
-          .setIcon("play")
-          .setTooltip(t("view.tools.run"))
-          .onClick(() => new ToolRunModal(this.app, entry, (args) => this.plugin.tools.run(entry.name, args, this.plugin.localClient)).open()),
-      );
-    }
   }
 
   private renderClients(body: HTMLElement): void {
@@ -687,20 +748,29 @@ export class EnvironmentVariablesView extends ItemView {
       const tr = tbody.createEl("tr", { cls: `ev-log-${e.outcome}` });
       tr.createEl("td", { text: new Date(e.time).toLocaleString() });
       tr.createEl("td", { text: e.client });
-      const actionLabel =
-        e.action === "list"
-          ? "list_secrets"
-          : e.action === "tool"
-            ? `tool ${e.tool ?? ""}`
-            : e.action === "adopt"
-              ? `adopt ${e.target ?? ""}`
-              : e.action === "spawn"
-                ? "spawn"
-                : `${e.method ?? ""} ${e.target ?? ""}`;
-      tr.createEl("td", { text: actionLabel.trim() });
+      tr.createEl("td", { text: auditActionLabel(e).trim() });
       tr.createEl("td", { text: e.secrets.join(", ") });
       tr.createEl("td", { text: e.status ? `${e.outcome} ${e.status}` : e.outcome, attr: { title: e.detail ?? "" } });
     }
+  }
+}
+
+function auditActionLabel(e: AuditEntry): string {
+  switch (e.action) {
+    case "list":
+      return "list_secrets";
+    case "tool":
+      return `tool ${e.tool ?? ""}`;
+    case "adopt":
+      return `adopt ${e.target ?? ""}`;
+    case "create":
+      return `create ${e.target ?? ""}`;
+    case "template":
+      return "template";
+    case "spawn":
+      return "spawn";
+    default:
+      return `${e.method ?? ""} ${e.target ?? ""}`;
   }
 }
 
@@ -741,6 +811,7 @@ function subHeading(parent: HTMLElement, title: string, opts: { count?: number; 
 const HOW_TO = [
   ["view.howto.vault", "view.howto.vaultDesc"],
   ["view.howto.variables", "view.howto.variablesDesc"],
+  ["view.howto.values", "view.howto.valuesDesc"],
   ["view.howto.references", "view.howto.referencesDesc"],
   ["view.howto.hosts", "view.howto.hostsDesc"],
   ["view.howto.clients", "view.howto.clientsDesc"],

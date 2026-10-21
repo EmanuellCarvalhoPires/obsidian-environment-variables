@@ -53,6 +53,22 @@ describe("mcpGroups", () => {
     expect(stats.requestCount).toBe(2);
   });
 
+  it("counts the tools of a downloaded package (mcp.db) by package id", () => {
+    const source = new MemorySource();
+    const dbTool = (name: string, keys: string[]): ToolEntry => ({
+      name, title: name, description: "d", kind: "request", params: {}, writes: false, expose: false,
+      notePath: "MCP/MCPs/Jira Cloud/jira-v3.db", noteName: name, mcpName: "Jira Cloud", mcpKeys: keys,
+      status: "ready", problems: [], warnings: [],
+    });
+    const entries = [dbTool("jira_get_issue", ["jira v3", "jira cloud"]), dbTool("jira_search", ["jira v3"]), dbTool("bb_repos", ["bitbucket"])];
+
+    const group = { ...newMcpGroup(), name: "Jira Cloud", tag: "api/app/jira", sourcePackageId: "jira-v3" };
+    const stats = computeMcpGroupStats(group, entries, source, []);
+
+    expect(stats.toolCount).toBe(2);
+    expect(stats.toolNames).toEqual(["jira_get_issue", "jira_search"]);
+  });
+
   it("parses one link per non-empty line", () => {
     expect(parseLinkLines("[[A]]\n\n [[B]] \nC\n")).toEqual(["[[A]]", "[[B]]", "C"]);
   });

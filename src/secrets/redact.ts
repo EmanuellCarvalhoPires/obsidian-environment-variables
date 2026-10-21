@@ -1,4 +1,4 @@
-import { SecretRecord } from "../store/types";
+import { MIN_MASKED_VALUE_LENGTH, SecretRecord, ValueRecord } from "../store/types";
 import { utf8ToBase64 } from "./placeholders";
 
 export const REDACTED = "***";
@@ -69,9 +69,17 @@ export function encodingsOf(value: string): string[] {
   ];
 }
 
-/** Full-match variants for a set of secrets, longest first. */
-export function redactionVariants(secrets: SecretRecord[]): string[] {
+/**
+ * Full-match variants for a set of secrets and values, longest first. Values shorter than
+ * MIN_MASKED_VALUE_LENGTH are left out, and values get no partial matching: they are often
+ * ordinary text (a URL, an address) that would over-mask.
+ */
+export function redactionVariants(secrets: SecretRecord[], values: ValueRecord[] = []): string[] {
   const variants = new Set<string>();
+  for (const v of values) {
+    if (v.value.length < MIN_MASKED_VALUE_LENGTH) continue;
+    for (const e of encodingsOf(v.value)) variants.add(e);
+  }
   for (const s of secrets) {
     for (const v of encodingsOf(s.value)) variants.add(v);
     if (s.username) {
@@ -181,8 +189,8 @@ function redactPartials(text: string, sources: string[], mask: string = REDACTED
 }
 
 /** Full variants first, then fragments. Use it on everything that leaves the plugin or is logged. */
-export function createRedactor(secrets: SecretRecord[], mask: string = REDACTED): Redactor {
-  const variants = redactionVariants(secrets);
+export function createRedactor(secrets: SecretRecord[], mask: string = REDACTED, values: ValueRecord[] = []): Redactor {
+  const variants = redactionVariants(secrets, values);
   const sources = partialSources(secrets);
   return {
     redact(text: string): RedactResult {

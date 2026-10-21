@@ -21,6 +21,8 @@ export interface ApprovalRequest {
   secrets: string[];
   /** Secrets in this request that may go to any host: the dialog asks the user to check the address. */
   anyHost?: string[];
+  /** Values (not secrets) in this request whose allowed hosts do not cover the destination. */
+  outsideHosts?: string[];
 }
 
 export interface BrokerActivityEvent {
@@ -107,6 +109,7 @@ export class Broker {
         input,
         (name) => this.store.get(name),
         (secret) => canUse(client.access, secret.id),
+        { valueLookup: (name) => this.store.getValue(name) },
       );
     } catch (err) {
       if (err instanceof PolicyError || err instanceof PlaceholderError) {
@@ -125,16 +128,24 @@ export class Broker {
       throw err;
     }
 
-    const names = prepared.usedSecrets.map((s) => s.name);
+    const valueNames = prepared.usedValues.map((v) => v.name);
+    const names = [...prepared.usedSecrets.map((s) => s.name), ...valueNames];
     const target = prepared.displayTarget;
 
     const extra = (options.alsoRedact ?? []).map((n) => this.store.get(n)).filter((s): s is NonNullable<typeof s> => s !== undefined);
-    const redactor = createRedactor([...prepared.usedSecrets, ...extra]);
+    const redactor = createRedactor([...prepared.usedSecrets, ...extra], undefined, prepared.usedValues);
 
     const anyHost = prepared.usedSecrets.filter((s) => s.allowAnyHost === true).map((s) => s.name);
     const needsApproval = options.fromVaultTool ? false : prepared.needsApproval;
     if (needsApproval) {
-      const approved = await this.approve({ client: who, method: prepared.method, url: target, secrets: names, anyHost });
+      const approved = await this.approve({
+        client: who,
+        method: prepared.method,
+        url: target,
+        secrets: names,
+        anyHost,
+        outsideHosts: prepared.valuesOutsideHosts,
+      });
       if (!approved) {
         this.audit.add({ client: who, action: "request", secrets: names, method: prepared.method, target, outcome: "denied" });
         return fail("denied", "The user denied this request in Obsidian.");
@@ -167,7 +178,8 @@ export class Broker {
       const body = secretInBytes ? "" : res.bodyEncoding === "base64" ? res.body : clean(res.body);
       const finalUrl = clean(res.finalUrl);
       const statusText = clean(res.statusText);
-      await this.store.markUsed(names);
+      await this.store.markUsed(prepared.usedSecrets.map((s) => s.name));
+      await this.store.markValuesUsed(valueNames);
       this.audit.add({
         client: who,
         action: "request",

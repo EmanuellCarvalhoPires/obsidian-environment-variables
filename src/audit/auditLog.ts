@@ -3,7 +3,7 @@ export type AuditOutcome = "ok" | "denied" | "blocked" | "locked" | "error";
 export interface AuditEntry {
   time: string;
   client: string;
-  action: "request" | "list" | "tool" | "spawn" | "adopt";
+  action: "request" | "list" | "tool" | "spawn" | "adopt" | "create" | "template";
   /** Vault tool name, for action "tool". Its requests are logged as separate "request" entries. */
   tool?: string;
   secrets: string[];
