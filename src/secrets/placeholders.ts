@@ -1,4 +1,4 @@
-import { SecretRecord } from "../store/types";
+import { SecretRecord, ValueRecord } from "../store/types";
 
 export type PlaceholderKind = "secret" | "basic" | "bearer";
 
@@ -57,6 +57,17 @@ export function resolvePlaceholder(match: PlaceholderMatch, secret: SecretRecord
       throw new PlaceholderError(`Unknown field "${match.field}". Use .user or .token.`);
     }
   }
+}
+
+/** A value is plain text: only {{secret:NAME}} (optionally .value) resolves it. */
+export function resolveValuePlaceholder(match: PlaceholderMatch, entry: ValueRecord): string {
+  if (match.kind !== "secret") {
+    throw new PlaceholderError(`${entry.name} is a value, not a secret: use {{secret:${entry.name}}}.`);
+  }
+  if (match.field && match.field !== "value") {
+    throw new PlaceholderError(`${entry.name} is a value and has no field "${match.field}". Use {{secret:${entry.name}}}.`);
+  }
+  return entry.value;
 }
 
 export function utf8ToBase64(text: string): string {

@@ -62,10 +62,14 @@ describe("SecretVaultService (Service Bus 'secrets' provider)", () => {
     expect("getSecret" in service).toBe(false);
     expect(Object.keys(service).sort()).toEqual([
       "adoptPlaintextSecret",
+      "createValue",
       "isLocked",
+      "nameExists",
       "redact",
       "request",
+      "resolveTemplateData",
       "spawnWithSecrets",
+      "spawnWithSecretsAndArgs",
     ]);
   });
 

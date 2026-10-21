@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Setting, SuggestModal } from "obsidian";
+import { App, ButtonComponent, Modal, Notice, Setting, SuggestModal } from "obsidian";
 import { iconLine } from "./dom";
 import { ApprovalRequest } from "../secrets/broker";
 import { isValidPattern, parsePattern, wildcardRisk } from "../secrets/hosts";
@@ -6,7 +6,7 @@ import { ClientAccess } from "../server/clients";
 import { t } from "../i18n";
 import { NameEntry } from "../settings";
 import { SecretInput, SecretStore } from "../store/secretStore";
-import { ApprovalPolicy, SecretRecord, SecretType } from "../store/types";
+import { ApprovalPolicy, SecretRecord, SecretType, ValueKind, VALUE_KINDS, ValueRecord, valueMatchesKind, MIN_MASKED_VALUE_LENGTH } from "../store/types";
 
 const TYPES: SecretType[] = ["token", "basic", "bearer", "header", "env"];
 const APPROVALS: ApprovalPolicy[] = ["never", "writes", "always"];
@@ -18,15 +18,32 @@ export function hostsLabel(secret: Pick<SecretRecord, "allowedHosts" | "allowAny
   return secret.allowedHosts.length ? secret.allowedHosts.join(", ") : t("view.noHosts");
 }
 
-export function referenceFor(secret: Pick<SecretRecord, "name" | "type">): string {
+export function referenceFor(secret: { name: string; type: SecretType | "value" }): string {
   if (secret.type === "basic") return `{{basic:${secret.name}}}`;
   if (secret.type === "bearer") return `{{bearer:${secret.name}}}`;
   return `{{secret:${secret.name}}}`;
 }
 
+export interface SecretModalOptions {
+  /**
+   * Only creates: a name already used by a secret or a value disables the Save button instead of being
+   * changed or overwritten. Used when an AI agent asks the user to create a secret.
+   */
+  createOnly?: boolean;
+  /** Starting values of the form, e.g. the agent's suggestions. Full access and Any host always start off. */
+  prefill?: { name?: string; type?: SecretType; description?: string; allowedHosts?: string[] };
+  /** The form was opened because an AI agent asked for it: says so at the top. */
+  fromAgent?: boolean;
+  /** Runs when the form closes; `saved` tells whether a secret was created or changed. */
+  onClosed?: (saved: boolean) => void;
+}
+
 /** Create or edit a variable. The current value is never shown. */
 export class SecretModal extends Modal {
   private draft: SecretInput;
+  private saved = false;
+  private saveButton: ButtonComponent | null = null;
+  private nameNotice: HTMLElement | null = null;
 
   constructor(
     app: App,
@@ -34,15 +51,17 @@ export class SecretModal extends Modal {
     private readonly existing: SecretRecord | null,
     private readonly onSaved: (secret: SecretRecord) => void = () => undefined,
     prefillValue = "",
+    private readonly options: SecretModalOptions = {},
   ) {
     super(app);
+    const prefill = existing ? undefined : options.prefill;
     const base = existing ?? {
-      name: "",
-      type: "token" as SecretType,
+      name: prefill?.name ?? "",
+      type: prefill?.type ?? "token",
       username: "",
       value: "",
-      description: "",
-      allowedHosts: [],
+      description: prefill?.description ?? "",
+      allowedHosts: prefill?.allowedHosts ?? [],
       allowAnyHost: false,
       fullAccess: false,
       allowHttpLocalhost: false,
@@ -69,10 +88,23 @@ export class SecretModal extends Modal {
     this.render();
   }
 
+  /** A new variable cannot reuse a name: names are shared by secrets and values, and nothing is overwritten from here. */
+  private nameTaken(): boolean {
+    return !this.existing && this.draft.name !== "" && this.store.isUnlocked && this.store.nameExists(this.draft.name);
+  }
+
+  private refreshNameState(): void {
+    const taken = this.nameTaken();
+    this.nameNotice?.empty();
+    if (taken && this.nameNotice) iconLine(this.nameNotice, "alert-triangle", t("modal.secret.nameExists", { name: this.draft.name }), "ev-warning");
+    this.saveButton?.setDisabled(taken);
+  }
+
   private render(): void {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("ev-secret-modal");
+    if (this.options.fromAgent) contentEl.createEl("p", { text: t("modal.secret.agentNote"), cls: "ev-muted" });
 
     new Setting(contentEl)
       .setName(t("modal.secret.name"))
@@ -81,8 +113,12 @@ export class SecretModal extends Modal {
         txt
           .setPlaceholder("JIRA_ACME")
           .setValue(this.draft.name)
-          .onChange((v) => (this.draft.name = v.trim())),
+          .onChange((v) => {
+            this.draft.name = v.trim();
+            this.refreshNameState();
+          }),
       );
+    this.nameNotice = contentEl.createDiv({ cls: "ev-modal-warning" });
 
     new Setting(contentEl).setName(t("modal.secret.type")).addDropdown((dd) => {
       for (const type of TYPES) dd.addOption(type, t(`type.${type}`));
@@ -167,15 +203,17 @@ export class SecretModal extends Modal {
 
     new Setting(contentEl)
       .addButton((b) => b.setButtonText(t("modal.secret.cancel")).onClick(() => this.close()))
-      .addButton((b) =>
-        b
-          .setButtonText(t("modal.secret.save"))
+      .addButton((b) => {
+        this.saveButton = b;
+        b.setButtonText(t("modal.secret.save"))
           .setCta()
-          .onClick(() => void this.save()),
-      );
+          .onClick(() => void this.save());
+      });
+    this.refreshNameState();
   }
 
   private async save(): Promise<void> {
+    if (this.nameTaken()) return;
     if (this.draft.fullAccess) {
       // Full access skips the approval dialog entirely: confirm once, not on every later edit.
       if (this.existing?.fullAccess === true) return this.commit();
@@ -215,6 +253,163 @@ export class SecretModal extends Modal {
         saved = await this.store.add(input);
       }
       this.draft.value = "";
+      this.saved = true;
+      this.close();
+      this.onSaved(saved);
+    } catch (err) {
+      new Notice(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  onClose(): void {
+    this.draft.value = "";
+    this.contentEl.empty();
+    this.options.onClosed?.(this.saved);
+  }
+}
+
+/** Creates an entry of the Values section: configuration text that shares the {{secret:NAME}} syntax with secrets. */
+export class ValueModal extends Modal {
+  private draft = { name: "", kind: "texto" as ValueKind, value: "", description: "", allowedHosts: [] as string[] };
+  private saveButton: ButtonComponent | null = null;
+  private nameNotice: HTMLElement | null = null;
+  private shortNotice: HTMLElement | null = null;
+
+  constructor(
+    app: App,
+    private readonly store: SecretStore,
+    private readonly onSaved: (value: ValueRecord) => void = () => undefined,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.titleEl.setText(t("modal.value.new"));
+    this.render();
+  }
+
+  private nameTaken(): boolean {
+    return this.draft.name !== "" && this.store.isUnlocked && this.store.nameExists(this.draft.name);
+  }
+
+  private refreshState(): void {
+    const taken = this.nameTaken();
+    this.nameNotice?.empty();
+    if (taken && this.nameNotice) iconLine(this.nameNotice, "alert-triangle", t("modal.secret.nameExists", { name: this.draft.name }), "ev-warning");
+    this.saveButton?.setDisabled(taken);
+    this.shortNotice?.empty();
+    const short = this.draft.value !== "" && this.draft.value.length < MIN_MASKED_VALUE_LENGTH;
+    if (short && this.shortNotice) iconLine(this.shortNotice, "alert-triangle", t("modal.value.shortWarning", { n: MIN_MASKED_VALUE_LENGTH }), "ev-warning");
+  }
+
+  private render(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("ev-secret-modal");
+
+    new Setting(contentEl)
+      .setName(t("modal.secret.name"))
+      .setDesc(t("modal.value.nameDesc"))
+      .addText((txt) =>
+        txt
+          .setPlaceholder("JIRA_PROJECT_KEY")
+          .setValue(this.draft.name)
+          .onChange((v) => {
+            this.draft.name = v.trim();
+            this.refreshState();
+          }),
+      );
+    this.nameNotice = contentEl.createDiv({ cls: "ev-modal-warning" });
+
+    new Setting(contentEl).setName(t("modal.value.kind")).addDropdown((dd) => {
+      for (const kind of VALUE_KINDS) dd.addOption(kind, t(`valueKind.${kind}`));
+      dd.setValue(this.draft.kind).onChange((v) => {
+        this.draft.kind = v as ValueKind;
+        this.render();
+      });
+    });
+
+    const valueRow = new Setting(contentEl)
+      .setName(t("modal.secret.value"))
+      .setDesc(t(this.draft.kind === "json" ? "modal.value.jsonDesc" : "modal.value.valueDesc"));
+    const onValueChange = (v: string) => {
+      this.draft.value = v;
+      this.refreshState();
+    };
+    if (this.draft.kind === "senha") {
+      valueRow.addText((txt) => {
+        txt.inputEl.type = "password";
+        txt.inputEl.autocomplete = "off";
+        txt.setValue(this.draft.value).onChange(onValueChange);
+      });
+    } else {
+      valueRow.addTextArea((ta) => {
+        ta.inputEl.rows = this.draft.kind === "json" ? 6 : 2;
+        ta.inputEl.autocomplete = "off";
+        ta.setValue(this.draft.value).onChange(onValueChange);
+      });
+    }
+    this.shortNotice = contentEl.createDiv({ cls: "ev-modal-warning" });
+
+    new Setting(contentEl).setName(t("modal.secret.description")).addText((txt) =>
+      txt.setValue(this.draft.description).onChange((v) => (this.draft.description = v)),
+    );
+
+    new Setting(contentEl)
+      .setName(t("modal.secret.hosts"))
+      .setDesc(t("modal.value.hostsDesc"))
+      .addTextArea((ta) => {
+        ta.inputEl.rows = 3;
+        ta.setPlaceholder("acme.atlassian.net")
+          .setValue(this.draft.allowedHosts.join("\n"))
+          .onChange((v) => (this.draft.allowedHosts = v.split(/[\n,]/).map((h) => h.trim()).filter(Boolean)));
+      });
+
+    new Setting(contentEl)
+      .addButton((b) => b.setButtonText(t("modal.secret.cancel")).onClick(() => this.close()))
+      .addButton((b) => {
+        this.saveButton = b;
+        b.setButtonText(t("modal.secret.save"))
+          .setCta()
+          .onClick(() => void this.save());
+      });
+    this.refreshState();
+  }
+
+  private async save(): Promise<void> {
+    if (this.nameTaken()) return;
+    if (this.draft.value.trim() === "") {
+      new Notice(t("modal.value.empty"));
+      return;
+    }
+    if (!valueMatchesKind(this.draft.kind, this.draft.value)) {
+      new Notice(t("modal.value.invalidKind", { kind: t(`valueKind.${this.draft.kind}`) }), 8000);
+      return;
+    }
+    const badHost = this.draft.allowedHosts.find((h) => !isValidPattern(h));
+    if (badHost) {
+      const tooBroad = wildcardRisk(badHost) === "public-suffix";
+      new Notice(tooBroad ? t("modal.secret.publicSuffix", { host: badHost }) : t("modal.secret.badHost", { host: badHost }), 8000);
+      return;
+    }
+    // The same two confirmations a secret gets: a shared platform wildcard, and a text too short to be masked.
+    const shared = this.draft.allowedHosts.filter((h) => wildcardRisk(h) === "multitenant");
+    const askShort = (): void => {
+      if (this.draft.value.length >= MIN_MASKED_VALUE_LENGTH) return void this.commit();
+      new ConfirmModal(this.app, t("modal.value.shortConfirm", { n: MIN_MASKED_VALUE_LENGTH }), () => this.commit()).open();
+    };
+    if (shared.length > 0) {
+      const tenant = parsePattern(shared[0])?.host ?? "";
+      new ConfirmModal(this.app, t("modal.secret.multitenant", { hosts: shared.join(", "), example: `acme.${tenant}` }), askShort).open();
+      return;
+    }
+    askShort();
+  }
+
+  private async commit(): Promise<void> {
+    try {
+      const saved = await this.store.addValue({ ...this.draft, createdBy: "obsidian" });
+      this.draft.value = "";
       this.close();
       this.onSaved(saved);
     } catch (err) {
@@ -250,6 +445,9 @@ export class ApprovalModal extends Modal {
     pre.setText(`${this.request.method} ${this.request.url}`);
     if (this.request.anyHost?.length) {
       iconLine(contentEl, "alert-triangle", t("modal.approval.anyHost", { secrets: this.request.anyHost.join(", ") }), "ev-warning ev-modal-warning");
+    }
+    if (this.request.outsideHosts?.length) {
+      iconLine(contentEl, "alert-triangle", t("modal.approval.outsideHosts", { values: this.request.outsideHosts.join(", ") }), "ev-warning ev-modal-warning");
     }
     const countdown = contentEl.createEl("p", { cls: "ev-muted" });
     let remaining = this.timeoutSeconds;

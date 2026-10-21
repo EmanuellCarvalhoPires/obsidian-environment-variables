@@ -1,5 +1,6 @@
-import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon, TFile } from "obsidian";
+import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon, TFile, TFolder } from "obsidian";
 import { AuditLog } from "./audit/auditLog";
+import { createSetupHandler, HooksDataPusher, hooksHosts, toolNoteFolders } from "./ecosystem/hooksFeed";
 import { installAndEnableEcosystem } from "./ecosystem/installEcosystem";
 import {
   AIEcosystemAPI,
@@ -10,6 +11,8 @@ import {
   HubRequest,
   HubResponse,
   HubRoute,
+  HOOKS_SERVICE,
+  HooksService,
   HubTool,
   isEcosystemEnabled,
   listEcosystemServiceNames,
@@ -49,6 +52,7 @@ import {
 } from "./tools/mcpCatalog";
 import { computeMcpGroupStats, matchedNotePaths, McpAppConfig, McpGroupConfig, McpGroupStats, randomGroupId } from "./tools/mcpGroups";
 import { McpDbManager } from "./tools/mcpDb";
+import { createSecretHubTool, CreateSecretPrefill, CreateSecretScreen } from "./tools/createSecretTool";
 import { ObsidianNoteSource } from "./tools/obsidianSource";
 import { ToolRegistry } from "./tools/registry";
 import { ScriptRunner } from "./tools/scriptRunner";
@@ -92,6 +96,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   private toolScanTimer: number | undefined;
   private disposeSecretService: (() => void) | undefined;
   private disposeServiceListener: (() => void) | undefined;
+  private disposeSetupHandler: (() => void) | undefined;
+  private readonly hooksPusher = new HooksDataPusher();
   private transitionNoticeShown = false;
   /** This vault's identity: its server, port and MCP server name are its own. */
   vaultId = "";
@@ -199,10 +205,11 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       dbManager: this.mcpDb,
     });
     this.register(this.registry.onChange(() => this.syncEcosystemTools()));
-    // Only tool notes, instance notes and mcp.db files trigger updates.
+    this.register(this.registry.onChange(() => this.syncHooksData()));
+    // Only tool notes, instance notes and package databases (*.db) trigger updates.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteEvent(() => this.registry.noteChanged(file.path))));
     this.registerEvent(this.app.vault.on("delete", (file) => {
-      if (file.name === "mcp.db") {
+      if (file.name.endsWith(".db")) {
         this.mcpDb.refresh();
         void this.registry.refresh();
       } else {
@@ -210,7 +217,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       }
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-      if (file.name === "mcp.db" || oldPath.endsWith("mcp.db")) {
+      if (file.name.endsWith(".db") || oldPath.endsWith(".db")) {
         this.mcpDb.refresh();
         void this.registry.refresh();
       } else {
@@ -218,7 +225,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       }
     }));
     this.registerEvent(this.app.vault.on("create", (file) => {
-      if (file.name === "mcp.db") {
+      if (file.name.endsWith(".db")) {
         this.mcpDb.refresh();
         void this.registry.refresh();
       }
@@ -235,6 +242,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.ribbon.addClass("ev-ribbon");
     this.register(this.store.onChange(() => this.updateRibbon()));
     this.register(this.store.onChange(() => this.syncNameIndex()));
+    this.register(this.store.onChange(() => this.syncHooksData()));
     this.register(
       this.store.onChange(() => {
         if (this.store.isUnlocked && this.connector?.api) {
@@ -330,6 +338,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.disposeSetupHandler?.();
+    this.disposeSetupHandler = undefined;
     this.disposeServiceListener?.();
     this.disposeServiceListener = undefined;
     this.disposeSecretService?.();
@@ -405,8 +415,16 @@ export default class EnvironmentVariablesPlugin extends Plugin {
 
   /** Names and types for writing references: from the vault when unlocked, else from the index. */
   variableNames(): NameEntry[] {
-    if (this.store.isUnlocked) return this.store.list().map((s) => ({ name: s.name, type: s.type }));
+    if (this.store.isUnlocked) return this.currentNameEntries();
     return this.data.settings.showNamesWhileLocked ? this.data.nameIndex : [];
+  }
+
+  /** Secrets and values: they share one namespace and one {{secret:NAME}} key. */
+  private currentNameEntries(): NameEntry[] {
+    return [
+      ...this.store.list().map((s): NameEntry => ({ name: s.name, type: s.type })),
+      ...this.store.listValues().map((v): NameEntry => ({ name: v.name, type: "value" })),
+    ];
   }
 
   /** Names to check chips against, or null when unknown (locked with the name index turned off). */
@@ -418,7 +436,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   /** Keeps the name index in data.json in step with the vault. Runs only while unlocked. */
   syncNameIndex(): void {
     if (!this.store.isUnlocked) return;
-    const next = this.data.settings.showNamesWhileLocked ? this.store.list().map((s) => ({ name: s.name, type: s.type })) : [];
+    const next = this.data.settings.showNamesWhileLocked ? this.currentNameEntries() : [];
     if (JSON.stringify(next) === JSON.stringify(this.data.nameIndex)) return;
     this.data.nameIndex = next;
     this.scheduleSave();
@@ -606,7 +624,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   /** Converts current MCP tools (core + vault #mcp/tool notes) into AI Ecosystem HubTool definitions. */
   buildHubTools(): HubTool[] {
     const defs = [...BUILT_IN_TOOLS, ...(this.tools.enabled() ? this.tools.mcpTools() : [])];
-    return defs.map((def) => ({
+    const tools: HubTool[] = defs.map((def) => ({
       name: def.name,
       title: def.title ?? def.name,
       description: def.description,
@@ -624,6 +642,37 @@ export default class EnvironmentVariablesPlugin extends Plugin {
         };
       },
     }));
+    return [...tools, this.createSecretTool()];
+  }
+
+  /** env_criar_secret: opens the create-variable screen for the user. The value never passes through the agent. */
+  private createSecretTool(): HubTool {
+    return createSecretHubTool({
+      isUnlocked: () => this.store.isUnlocked,
+      openScreen: (prefill) => this.openCreateSecretScreen(prefill),
+      suggestedHosts: () => this.data.serviceHosts,
+      audit: this.audit,
+      clientName: (ctx) => this.resolveHubClient(ctx.client).name,
+      onCall: () => this.touch(),
+    });
+  }
+
+  /** The panel's New variable form in create-only mode, prefilled with the agent's suggestions. */
+  private openCreateSecretScreen(prefill: CreateSecretPrefill): CreateSecretScreen {
+    new Notice(t("notice.createSecretAsked"), 8_000);
+    let modal: SecretModal | undefined;
+    const result = new Promise<string | null>((resolve) => {
+      modal = new SecretModal(this.app, this.store, null, (secret) => resolve(secret.name), "", {
+        createOnly: true,
+        fromAgent: true,
+        prefill,
+        onClosed: (saved) => {
+          if (!saved) resolve(null);
+        },
+      });
+      modal.open();
+    });
+    return { result, close: () => modal?.close() };
   }
 
   /** Converts MCP prompts (`configure_vault_tools`) into AI Ecosystem HubPrompt definitions. */
@@ -691,8 +740,10 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.disposeServiceListener = api.onServiceChange((serviceName, available) => {
       if (available) {
         void this.adoption.inspectService(api, serviceName);
+        if (serviceName === HOOKS_SERVICE) this.connectHooks(api);
       }
     });
+    this.connectHooks(api);
 
     if (this.store.isUnlocked) {
       void this.adoption.scanAll(api, listEcosystemServiceNames(this.app));
@@ -706,6 +757,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   private handleEcosystemDisconnected(): void {
+    this.disposeSetupHandler?.();
+    this.disposeSetupHandler = undefined;
     this.disposeServiceListener?.();
     this.disposeServiceListener = undefined;
     this.disposeSecretService?.();
@@ -827,6 +880,80 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     if (owner?.isPlugin && owner.vaultName) return t("notice.portOwnerVault", { name: owner.vaultName });
     if (owner?.isPlugin) return t("notice.portOwnerOtherVault");
     return t("notice.portOwnerProgram");
+  }
+
+  // ---------- AI Ecosystem hooks ----------
+
+  /** Registers the set-up handler and feeds the hooks service. Does nothing when the core has no such service. */
+  private connectHooks(api: AIEcosystemAPI): void {
+    const hooks = this.hooksService(api);
+    if (!hooks) return;
+    this.hooksPusher.reset();
+    this.disposeSetupHandler?.();
+    this.disposeSetupHandler = undefined;
+    if (typeof hooks.registerSetupHandler === "function") {
+      this.disposeSetupHandler = hooks.registerSetupHandler(
+        MODULE_ID,
+        createSetupHandler({
+          isUnlocked: () => this.store.isUnlocked,
+          counts: () => (this.store.isUnlocked ? { secrets: this.store.list().length, values: this.store.listValues().length } : null),
+          indexedCounts: () => {
+            const values = this.data.nameIndex.filter((e) => e.type === "value").length;
+            return { secrets: this.data.nameIndex.length - values, values };
+          },
+          toolNotesFolder: () => this.toolNoteFolderList()[0] ?? "",
+          folderExists: (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFolder,
+          setToolNotesFolder: (path) => this.setToolNotesFolder(path),
+          knownHosts: () => this.currentHosts(),
+          setServiceHosts: async (hosts) => {
+            this.data.serviceHosts = hosts;
+            await this.saveAll();
+          },
+        }),
+      );
+    }
+    this.syncHooksData();
+  }
+
+  private hooksService(api: AIEcosystemAPI | undefined): HooksService | undefined {
+    try {
+      return api?.getService<HooksService>(HOOKS_SERVICE);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Hosts of the secrets that have a host list, plus those of the values. From the name index of hosts while locked. */
+  private currentHosts(): string[] {
+    return this.store.isUnlocked ? hooksHosts(this.store.list(), this.store.listValues()) : this.data.hostIndex;
+  }
+
+  private toolNoteFolderList(): string[] {
+    return toolNoteFolders(
+      this.data.settings.toolNotesFolder,
+      this.registry.list().map((e) => e.notePath),
+    );
+  }
+
+  /**
+   * Sends the hooks service the hosts and the tool note folders. Never names or values.
+   * Runs when secrets, values or tool notes change; a push identical to the last one is skipped.
+   */
+  syncHooksData(): void {
+    const hosts = this.currentHosts();
+    if (this.store.isUnlocked && JSON.stringify(hosts) !== JSON.stringify(this.data.hostIndex)) {
+      this.data.hostIndex = hosts;
+      this.scheduleSave();
+    }
+    const service = this.hooksService(this.connector?.api);
+    this.hooksPusher.push(service, MODULE_ID, { hosts, toolNoteFolders: this.toolNoteFolderList() });
+  }
+
+  /** The folder of the tool notes, as chosen in the settings or by the guided set-up. */
+  async setToolNotesFolder(path: string): Promise<void> {
+    this.data.settings.toolNotesFolder = path;
+    await this.saveAll();
+    this.syncHooksData();
   }
 
   // ---------- MCP server name ----------
@@ -1056,7 +1183,9 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     let written = 0;
     let skipped = 0;
     for (const file of files) {
-      const target = normalizePath(`${packageFolder}/${file.path}`);
+      // A database is named after its package id: packages sharing a folder (Confluence v1/v2,
+      // the three Jira Service Management ones) would otherwise all write the same mcp.db.
+      const target = normalizePath(`${packageFolder}/${file.kind === "database" ? `${entry.id}.db` : file.path}`);
       const existing = this.app.vault.getAbstractFileByPath(target);
       const folder = target.slice(0, target.lastIndexOf("/"));
       if (folder && !madeFolders.has(folder)) {

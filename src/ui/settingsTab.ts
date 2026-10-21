@@ -1,5 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting, TextComponent } from "obsidian";
 import { describeVault } from "../crypto/vaultFile";
+import { cleanFolder } from "../ecosystem/hooksFeed";
 import { t } from "../i18n";
 import type EnvironmentVariablesPlugin from "../main";
 import { SERVER_NAME_PATTERN } from "../server/vaultIdentity";
@@ -154,6 +155,24 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
 
     this.addTagSetting(containerEl, t("settings.toolTag"), t("settings.toolTagDesc"), "toolTag", "mcp/tool");
     this.addTagSetting(containerEl, t("settings.requestTag"), t("settings.requestTagDesc"), "requestTag", "api/request");
+
+    new Setting(containerEl)
+      .setName(t("settings.toolNotesFolder"))
+      .setDesc(t("settings.toolNotesFolderDesc"))
+      .addText((text) => {
+        text
+          .setPlaceholder("MCP")
+          .setValue(s.toolNotesFolder)
+          .onChange(async (raw) => {
+            const folder = cleanFolder(raw);
+            if (raw.trim() === "" || folder) {
+              text.inputEl.removeClass("has-error");
+              await this.plugin.setToolNotesFolder(folder);
+            } else {
+              text.inputEl.addClass("has-error");
+            }
+          });
+      });
     this.addNumberSetting(containerEl, t("settings.scriptTimeout"), "", "scriptTimeoutSeconds");
 
     // --- Logs ---

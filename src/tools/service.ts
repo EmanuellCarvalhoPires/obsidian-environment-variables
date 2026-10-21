@@ -8,7 +8,7 @@ import { inputSchema, validateArgs } from "./definition";
 import { ToolRegistry } from "./registry";
 import { parseRequestBlock, resolveRequest, servicePlaceholderNames } from "./requestNote";
 import { ScriptRunner } from "./scriptRunner";
-import { compileEndpoint, EndpointPattern, endpointOf, howToRun, matchEndpoint, RunHint, searchTools } from "./toolSearch";
+import { compileEndpoint, EndpointPattern, endpointOf, howToRun, matchEndpoint, mcpOf, normalizeMcpKey, RunHint, searchTools, summarizeMcps } from "./toolSearch";
 import { McpDbManager } from "./mcpDb";
 import { NoteSource, ToolEntry, ToolError, VaultNote } from "./types";
 
@@ -62,24 +62,57 @@ export const META_TOOLS: McpToolDefinition[] = [
     name: "list_vault_tools",
     title: "List vault tools and their status",
     description:
-      "Lists every tool note found in the vault with its status (ready, scripts-disabled, invalid), parameters and problems to fix, plus the saved request notes. Use it to check your work after creating or editing tool notes. " +
-      "The output is large: to find a tool for a task, use search_vault_tools.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      "Lists the tool notes and package tools found in the vault with their status (ready, scripts-disabled, invalid), parameters and problems to fix, plus the saved request notes. Use it to check your work after creating or editing tool notes. " +
+      "Without filters the output is very large: pass mcp, name, query or status to narrow it down. To find a tool for a task, use search_vault_tools.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mcp: { type: "string", description: "Only the tools of this MCP package, e.g. \"Jira\", \"Jira Service Management\", \"Bitbucket\"." },
+        name: { type: "string", description: "Only the tool with this exact name." },
+        query: { type: "string", description: "Only tools whose name, title or description contain every word." },
+        status: { type: "string", enum: ["ready", "scripts-disabled", "invalid"], description: "Only tools with this status." },
+      },
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
     name: "search_vault_tools",
     title: "Search vault tools",
     description:
-      "Finds vault tools for a task, including tools with expose: false. Pass the method and URL you would send with http_request to find the tool that covers that endpoint, and/or keywords (e.g. \"jira changelog\"). " +
-      "Returns a short list with name, description, parameters and how to run each tool (run). Call it before http_request.",
+      "Finds vault tools for a task. Most tools (Jira, Jira Software, Jira Service Management, Assets, Confluence, Bitbucket, Automation...) are NOT in your tool list: find them here and run them with run_vault_tool. " +
+      "Filters, combinable: mcp (package, e.g. \"Jira\", \"Jira Service Management\", \"Bitbucket\", \"jsm\"), name (exact tool name, e.g. \"jira_get_issue\"), query (keywords, e.g. \"issue changelog\"), method + url (the endpoint you would send with http_request). " +
+      "Only mcp lists that MCP's tools one line each (paged with offset); no arguments returns the available MCPs. Results include parameters and how to run each tool (run). Call it before http_request.",
     inputSchema: {
       type: "object",
       properties: {
+        mcp: { type: "string", description: "MCP package: \"Jira\", \"Jira Software\", \"Jira Service Management\", \"JSM Assets\", \"Confluence\", \"Bitbucket\", \"Automation\"... Call without arguments to see them all." },
+        name: { type: "string", description: "Exact tool name, e.g. \"jira_get_issue\". Falls back to tools whose name contains it." },
         query: { type: "string", description: "Keywords, e.g. \"jira issue changelog\"." },
         method: { type: "string", description: "HTTP method of the endpoint, e.g. GET." },
         url: { type: "string", description: "URL or path of the endpoint, e.g. https://acme.atlassian.net/rest/api/3/issue/ABC-1/changelog." },
-        limit: { type: "number", description: "Maximum results (default 10, max 50)." },
+        limit: { type: "number", description: "Maximum results (default 10, max 50; listing a whole MCP: default 50, max 200)." },
+        offset: { type: "number", description: "Results to skip, for paging." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "list_tools",
+    title: "Search and list tools",
+    description:
+      "Finds and lists tools. Filters, combinable: mcp (package, e.g. \"Jira\", \"Jira Service Management\", \"Bitbucket\"), name (exact tool name, e.g. \"jira_get_issue\"), query (keywords). Without arguments, returns the available MCP packages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mcp: { type: "string", description: "MCP package: \"Jira\", \"Jira Software\", \"Jira Service Management\", \"JSM Assets\", \"Confluence\", \"Bitbucket\", \"Automation\"... Call without arguments to see them all." },
+        name: { type: "string", description: "Exact tool name, e.g. \"jira_get_issue\". Falls back to tools whose name contains it." },
+        query: { type: "string", description: "Keywords, e.g. \"jira issue changelog\"." },
+        method: { type: "string", description: "HTTP method of the endpoint, e.g. GET." },
+        url: { type: "string", description: "URL or path of the endpoint, e.g. https://acme.atlassian.net/rest/api/3/issue/ABC-1/changelog." },
+        limit: { type: "number", description: "Maximum results (default 10, max 50; listing a whole MCP: default 50, max 200)." },
+        offset: { type: "number", description: "Results to skip, for paging." },
       },
       additionalProperties: false,
     },
@@ -161,9 +194,9 @@ export class ToolsService {
         return { text: this.deps.guide(), isError: false };
       }
       if (name === "list_vault_tools") {
-        return { value: this.status(), isError: false };
+        return { value: this.status(args), isError: false };
       }
-      if (name === "search_vault_tools") {
+      if (name === "search_vault_tools" || name === "list_tools") {
         return { value: searchTools(this.deps.registry.list(), await this.endpointIndex(), args), isError: false };
       }
       if (name === "run_vault_tool") {
@@ -176,15 +209,31 @@ export class ToolsService {
     }
   }
 
-  /** For list_vault_tools and GET /v1/tools. Never contains secret values. */
-  status(): Record<string, unknown> {
+  /** For list_vault_tools and GET /v1/tools. Never contains secret values. Filters: mcp, name, query, status. */
+  status(filters: Record<string, unknown> = {}): Record<string, unknown> {
     const s = this.deps.settings();
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const mcp = str(filters.mcp);
+    const name = str(filters.name).toLowerCase();
+    const words = str(filters.query).toLowerCase().split(/\s+/).filter(Boolean);
+    const status = str(filters.status);
+    const filtered = !!(mcp || name || words.length || status);
+    let entries = this.deps.registry.list();
+    if (mcp) {
+      const wanted = normalizeMcpKey(mcp);
+      const exact = entries.filter((e) => mcpOf(e)?.keys.includes(wanted));
+      entries = exact.length ? exact : entries.filter((e) => mcpOf(e)?.keys.some((k) => k.includes(wanted)));
+    }
+    if (name) entries = entries.filter((e) => e.name.toLowerCase() === name);
+    if (words.length) entries = entries.filter((e) => words.every((w) => `${e.name} ${e.title} ${e.description}`.toLowerCase().includes(w)));
+    if (status) entries = entries.filter((e) => e.status === status);
     return {
       enabled: s.toolsEnabled,
       scriptsEnabled: s.scriptsEnabled,
       toolTag: s.toolTag,
       requestTag: s.requestTag,
-      tools: this.deps.registry.list().map((e) => ({
+      ...(filtered ? {} : { mcps: summarizeMcps(this.deps.registry.list()) }),
+      tools: entries.map((e) => ({
         name: e.name,
         title: e.title,
         kind: e.kind,
@@ -193,6 +242,7 @@ export class ToolsService {
         params: e.params,
         writes: e.writes,
         expose: e.expose,
+        mcp: mcpOf(e)?.name,
         note: e.notePath,
         request: e.request,
         service: e.service,
@@ -202,7 +252,7 @@ export class ToolsService {
         problems: e.problems,
         warnings: e.warnings,
       })),
-      requestNotes: s.requestTag
+      requestNotes: s.requestTag && !filtered
         ? this.deps.source.byTag(s.requestTag).map((n) => ({ name: n.name, note: n.path, service: typeof n.frontmatter.service === "string" ? n.frontmatter.service : undefined }))
         : [],
     };
