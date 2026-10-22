@@ -46,7 +46,8 @@ export type PolicyCode =
   | "host_not_allowed"
   | "insecure_scheme"
   | "placement_not_allowed"
-  | "invalid_placeholder";
+  | "invalid_placeholder"
+  | "secret_in_body";
 
 export class PolicyError extends Error {
   constructor(
