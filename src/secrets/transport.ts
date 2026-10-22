@@ -33,8 +33,12 @@ export type BodyEncoding = "text" | "base64" | "omitted";
 
 export type Transport = (req: TransportRequest) => Promise<TransportResponse>;
 
-/** Bodies returned as text: text/*, the common application types and any "+json" or "+xml" type, such as image/svg+xml. */
-const TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded|graphql)|[\w.-]+\/[\w.+-]*\+(json|xml)\b)/i;
+/**
+ * Bodies returned as text: text/* (text/x-diff, text/x-patch included), the common application types, any "+json"
+ * or "+xml" type, such as image/svg+xml, and the GitHub diff and patch types (application/vnd.github.v3.diff).
+ */
+const TEXT_TYPES =
+  /^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded|graphql)|application\/vnd\.github(\.v3)?\.(diff|patch)\b|[\w.-]+\/[\w.+-]*\+(json|xml)\b)/i;
 
 /** Binary bodies returned in base64: images (PNG icons, charts). The broker drops them if a secret is in the bytes. */
 const BASE64_TYPES = /^image\//i;

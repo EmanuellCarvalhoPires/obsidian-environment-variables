@@ -30,6 +30,16 @@ Your notes contain only a key such as `{{basic:JIRA_ACME}}`. When an AI agent (C
 - **Transition Mode (standalone compatibility):** if you update Environment Keys to 2.0 before installing AI Ecosystem, the plugin starts a lightweight transition server on port 27150 (`/mcp`, `/v1/request`, `/api/v1/environment-variables/request`) so existing scripts and MCP clients keep working, and shows a non-blocking banner with a 1-click **Install and enable AI Ecosystem** button. As soon as AI Ecosystem becomes active (`ai-ecosystem:ready`), Environment Keys stops the transition server, frees port 27150, and registers as a module automatically.
 - **Manual:** download `main.js`, `manifest.json` and `styles.css` from the [latest release](../../releases/latest) into `<vault>/.obsidian/plugins/environment-variables/`, then enable the plugin in **Settings → Community plugins**.
 
+### The `secrets` service (for other modules)
+
+Sibling modules get it with `getService('secrets')`. It never returns a secret value:
+
+- `request({ method, url, headers?, body?, timeoutMs? }, callerModuleId)`: sends an HTTP request with `{{secret:NAME}}`, `{{basic:NAME}}` or `{{bearer:NAME}}` placeholders resolved inside the plugin; the response comes back redacted. `body` may be a string or an object (sent as JSON).
+- `listSecretMetadata(callerModuleId)` (2.2.0): the stored secrets as `{ name, type, hasUsername, allowedHosts, allowAnyHost, approval }`, sorted by name, so a module can offer them in a list and pick `{{bearer:NAME}}` or `{{basic:NAME}}` by type. No value, id or username (only `hasUsername`); entries of the Values section are not listed. Rejects with `VaultLockedError` while the vault is locked and is logged in the audit log as a `list` by the caller.
+- `isLocked()`, `redact(text)`, `spawnWithSecrets(...)`, `spawnWithSecretsAndArgs(...)`, `adoptPlaintextSecret(...)`, `nameExists(name)`, `createValue(...)` and `resolveTemplateData(...)`. Optional methods may be missing in older versions: check before calling.
+
+Response bodies of type `text/*`, JSON, XML and the GitHub diff and patch types (`application/vnd.github.v3.diff`, `application/vnd.github.v3.patch`) come back as text; images come back in base64; other binary bodies are left out.
+
 ## How it works
 
 1. Click the key icon in the left ribbon to open the **Environment Keys** panel.

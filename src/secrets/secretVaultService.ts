@@ -1,6 +1,6 @@
 import { AuditLog, safeTarget } from "../audit/auditLog";
 import { SecretStore, VaultLockedError } from "../store/secretStore";
-import { SECRET_NAME_PATTERN, ValueKind, VALUE_KINDS, valueMatchesKind } from "../store/types";
+import { ApprovalPolicy, SECRET_NAME_PATTERN, SecretType, ValueKind, VALUE_KINDS, valueMatchesKind } from "../store/types";
 import { BrokerActivityEvent } from "./broker";
 import { isValidPattern } from "./hosts";
 import { findPlaceholders, hasPlaceholderLikeText, resolvePlaceholder, resolveValuePlaceholder } from "./placeholders";
@@ -14,6 +14,13 @@ export interface SecretRequest {
   headers?: Record<string, string>;
   body?: string | Record<string, unknown>;
   timeoutMs?: number;
+  /**
+   * The body is sent exactly as given: placeholders in it are never resolved, and the request is refused
+   * when the body contains the value of any stored secret or value. Used for raw content such as the
+   * files of a release, where `{{secret:...}}` text is code, not a request for a token. Headers and the URL
+   * still resolve placeholders as usual.
+   */
+  rawBody?: boolean;
 }
 
 export interface SecretResponse {
@@ -37,6 +44,21 @@ export interface CreateValueInput {
   description?: string;
   /** Module or tool that asked for it, for the audit log. */
   createdBy: string;
+}
+
+/**
+ * What another module may know about a secret: enough to offer it in a list and to pick
+ * `{{bearer:NAME}}` or `{{basic:NAME}}` by its type. Never the value, the internal id or the username itself.
+ */
+export interface SecretInfo {
+  name: string;
+  type: SecretType;
+  /** True when the secret has a username (the "basic" type). The username itself is not returned. */
+  hasUsername: boolean;
+  allowedHosts: string[];
+  /** True when the secret may go to any https host (its "allow any host" or "full access" option is on). */
+  allowAnyHost: boolean;
+  approval: ApprovalPolicy;
 }
 
 /** Why a value was not created. `invalid_value` means the text does not fit the kind (e.g. a number that is not one). */
@@ -71,6 +93,12 @@ export interface SecretVaultService {
   ): Promise<void>;
   /** Resolves {{secret:NAME}} of VALUES (never of secrets) inside template data. Other placeholders stay as they are. */
   resolveTemplateData?(data: unknown, callerModuleId: string): Promise<unknown>;
+  /**
+   * Names, types and hosts of the stored secrets (not of the Values section), sorted by name.
+   * Never returns a value, an id or a username. Rejects with `VaultLockedError` while locked.
+   * Logged in the audit log as a "list" by `callerModuleId`. Added in 2.2.0.
+   */
+  listSecretMetadata?(callerModuleId: string): Promise<SecretInfo[]>;
 }
 
 export interface SecretVaultServiceOptions {
@@ -115,10 +143,16 @@ export function createSecretVaultService(options: SecretVaultServiceOptions): Se
     }
 
     const headers: Record<string, string> = { ...(req.headers ?? {}) };
+    const rawBody = req.rawBody === true;
     let bodyText: string | undefined;
     if (typeof req.body === "string") {
       bodyText = req.body;
     } else if (req.body !== undefined && req.body !== null) {
+      if (rawBody) {
+        const err = new PolicyError("invalid_request", "rawBody needs the body as a string.");
+        audit.add({ client: clientLabel, action: "request", secrets: [], method, target: safeTargetFromRaw(req.url), outcome: "blocked", detail: `invalid_request: ${err.message}` });
+        throw err;
+      }
       bodyText = JSON.stringify(req.body);
       if (!Object.keys(headers).some((k) => k.toLowerCase() === "content-type")) {
         headers["Content-Type"] = "application/json";
@@ -127,8 +161,9 @@ export function createSecretVaultService(options: SecretVaultServiceOptions): Se
 
     let prepared;
     try {
+      // A raw body is not given to the placeholder resolver at all: whatever text it contains goes out unchanged.
       prepared = prepareRequest(
-        { method, url: req.url, headers, body: bodyText },
+        { method, url: req.url, headers, body: rawBody ? undefined : bodyText },
         (name) => store.get(name),
         () => true,
         { allowUrlAndBodyPlacement: true, valueLookup: (name) => store.getValue(name) },
@@ -155,6 +190,14 @@ export function createSecretVaultService(options: SecretVaultServiceOptions): Se
       throw err;
     }
 
+    // Raw body: refused if it holds the value of any stored secret or value (exact text or a redaction variant).
+    const outBody = rawBody ? bodyText : prepared.body;
+    if (rawBody && bodyText !== undefined && createRedactor(store.list(), INSPECTOR_REDACTED, store.listValues()).redact(bodyText).count > 0) {
+      const err = new PolicyError("secret_in_body", "The body contains the value of a secret in Environment Keys, so it was not sent. Remove the value from the body.");
+      audit.add({ client: clientLabel, action: "request", secrets: [], method, target: safeTargetFromRaw(req.url), outcome: "blocked", detail: `${err.code}` });
+      throw err;
+    }
+
     const valueNames = prepared.usedValues.map((v) => v.name);
     const secretNames = [...prepared.usedSecrets.map((s) => s.name), ...valueNames];
     const target = prepared.displayTarget;
@@ -166,7 +209,7 @@ export function createSecretVaultService(options: SecretVaultServiceOptions): Se
         method: prepared.method,
         url: prepared.url,
         headers: prepared.headers,
-        body: prepared.body,
+        body: outBody,
         timeoutMs,
         maxResponseBytes: cfg.maxResponseBytes,
         maxRedirects: cfg.maxRedirects,
@@ -393,6 +436,29 @@ export function createSecretVaultService(options: SecretVaultServiceOptions): Se
     return resolved;
   };
 
+  const listSecretMetadata = async (callerModuleId: string): Promise<SecretInfo[]> => {
+    const clientLabel = callerModuleId || "ecosystem-module";
+    if (!store.isUnlocked) {
+      audit.add({ client: clientLabel, action: "list", secrets: [], outcome: "locked" });
+      throw new VaultLockedError();
+    }
+    audit.add({ client: clientLabel, action: "list", secrets: [], outcome: "ok" });
+    // Built field by field (no spread), so a field added to SecretRecord later never leaks by accident.
+    return store
+      .list()
+      .map(
+        (s): SecretInfo => ({
+          name: s.name,
+          type: s.type,
+          hasUsername: typeof s.username === "string" && s.username.trim() !== "",
+          allowedHosts: [...(s.allowedHosts ?? [])],
+          allowAnyHost: s.allowAnyHost === true || s.fullAccess === true,
+          approval: s.approval,
+        }),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   const adoptPlaintextSecret = async (input: AdoptSecretInput): Promise<{ placeholder: string }> => {
     const clientLabel = input.ownerModuleId || "ecosystem-module";
     if (!store.isUnlocked) {
@@ -462,6 +528,7 @@ export function createSecretVaultService(options: SecretVaultServiceOptions): Se
     createValue,
     spawnWithSecretsAndArgs,
     resolveTemplateData,
+    listSecretMetadata,
   });
 }
 

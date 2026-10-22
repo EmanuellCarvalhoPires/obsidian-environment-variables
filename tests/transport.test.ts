@@ -47,6 +47,12 @@ describe("response bodies", () => {
     "application/atom+xml",
     "image/svg+xml",
     "image/svg+xml;charset=UTF-8",
+    "application/vnd.github.v3.diff",
+    "application/vnd.github.diff",
+    "application/vnd.github.v3.patch",
+    "application/vnd.github.patch; charset=utf-8",
+    "text/x-diff",
+    "text/x-patch",
   ])("returns %j as text", async (type) => {
     const res = await fetchAs(type);
     expect(res.bodyEncoding).toBe("text");

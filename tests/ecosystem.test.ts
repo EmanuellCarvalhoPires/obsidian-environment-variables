@@ -64,6 +64,7 @@ describe("SecretVaultService (Service Bus 'secrets' provider)", () => {
       "adoptPlaintextSecret",
       "createValue",
       "isLocked",
+      "listSecretMetadata",
       "nameExists",
       "redact",
       "request",
@@ -170,6 +171,54 @@ describe("SecretVaultService (Service Bus 'secrets' provider)", () => {
     expect(response.body).toContain("[REDACTED]");
     expect(audit.list()[0].client).toBe("telegram-ai-gateway");
     expect(audit.list()[0].outcome).toBe("ok");
+  });
+
+  it("raw body: placeholder text goes out unchanged, and a body holding a stored secret value is refused", async () => {
+    const { store } = await unlockedStore();
+    const token = "55443322:AAH_raw_body_token_value_for_tests";
+    await store.add({
+      name: "GITHUB_RAW_TOKEN",
+      type: "token",
+      value: token,
+      description: "GitHub token",
+      allowedHosts: ["uploads.github.com"],
+      allowAnyHost: false,
+      allowHttpLocalhost: false,
+      placement: { headers: true, url: false, body: false },
+      approval: "never",
+    });
+
+    let sent: { url: string; headers: Record<string, string>; body: string } | undefined;
+    const fakeTransport: Transport = async (req) => {
+      sent = { url: req.url.toString(), headers: req.headers, body: req.body ?? "" };
+      return { status: 201, statusText: "Created", headers: {}, body: "{}", bodyEncoding: "text", bodyBytes: 2, truncated: false, finalUrl: req.url.toString(), redirects: 0 };
+    };
+    const audit = new AuditLog();
+    const service = createSecretVaultService({
+      store,
+      transport: fakeTransport,
+      audit,
+      limits: () => ({ timeoutMs: 5000, maxResponseBytes: 1_000_000, maxRedirects: 3 }),
+    });
+    const url = "https://uploads.github.com/repos/o/r/releases/1/assets?name=main.js";
+
+    // Code that contains placeholder-like text (not a request for a token) is sent as it is.
+    const code = 'const RE = /\\{\\{\\s*(secret|basic|bearer)\\s*:/; const x = "{{secret:NOME}}";';
+    await service.request({ method: "POST", url, headers: { Authorization: "{{bearer:GITHUB_RAW_TOKEN}}" }, body: code, rawBody: true }, "ai-git-tools");
+    expect(sent?.body).toBe(code);
+    expect(sent?.headers.Authorization).toBe(`Bearer ${token}`);
+
+    // The header still gets the real token; the body never does.
+    expect(sent?.body).not.toContain(token);
+
+    // A body holding the stored value itself is refused and never reaches the transport.
+    sent = undefined;
+    await expect(
+      service.request({ method: "POST", url, headers: { Authorization: "{{bearer:GITHUB_RAW_TOKEN}}" }, body: `conteudo ${token} fim`, rawBody: true }, "ai-git-tools"),
+    ).rejects.toMatchObject({ code: "secret_in_body" });
+    expect(sent).toBeUndefined();
+    expect(audit.list()[0].outcome).toBe("blocked");
+    expect(JSON.stringify(audit.list())).not.toContain(token);
   });
 
   it("blocks requests when the destination host is not in allowedHosts", async () => {
