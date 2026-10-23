@@ -14,11 +14,13 @@ import {
   HOOKS_SERVICE,
   HooksService,
   HubTool,
+  IndexedToolRunner,
   isEcosystemEnabled,
   listEcosystemServiceNames,
   MODULE_ID,
   ModuleRegistration,
   SUPPORTED_API_VERSION,
+  TOOL_RUNNER_SERVICE,
 } from "./ecosystem/moduleConnector";
 import { clearProperties, decorateProperties } from "./editor/properties";
 import { placeholderExtension, renderPlaceholders } from "./editor/render";
@@ -52,7 +54,8 @@ import {
 } from "./tools/mcpCatalog";
 import { computeMcpGroupStats, matchedNotePaths, McpAppConfig, McpGroupConfig, McpGroupStats, randomGroupId } from "./tools/mcpGroups";
 import { McpDbManager } from "./tools/mcpDb";
-import { createSecretHubTool, CreateSecretPrefill, CreateSecretScreen } from "./tools/createSecretTool";
+import { metadataFor, NATIVE_TOOL_METADATA } from "./tools/hubMetadata";
+import { CREATE_SECRET_TOOL_NAME, createSecretHubTool, CreateSecretPrefill, CreateSecretScreen } from "./tools/createSecretTool";
 import { ObsidianNoteSource } from "./tools/obsidianSource";
 import { ToolRegistry } from "./tools/registry";
 import { ScriptRunner } from "./tools/scriptRunner";
@@ -95,6 +98,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   private propertyDocs = new Set<Document>();
   private toolScanTimer: number | undefined;
   private disposeSecretService: (() => void) | undefined;
+  private disposeToolRunner: (() => void) | undefined;
   private disposeServiceListener: (() => void) | undefined;
   private disposeSetupHandler: (() => void) | undefined;
   private readonly hooksPusher = new HooksDataPusher();
@@ -344,6 +348,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.disposeServiceListener = undefined;
     this.disposeSecretService?.();
     this.disposeSecretService = undefined;
+    this.disposeToolRunner?.();
+    this.disposeToolRunner = undefined;
     this.connector?.stop();
     void this.server?.stop();
     this.server = null;
@@ -625,6 +631,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   buildHubTools(): HubTool[] {
     const defs = [...BUILT_IN_TOOLS, ...(this.tools.enabled() ? this.tools.mcpTools() : [])];
     const tools: HubTool[] = defs.map((def) => ({
+      ...metadataFor(def.name, def.annotations?.destructiveHint === true),
       name: def.name,
       title: def.title ?? def.name,
       description: def.description,
@@ -642,7 +649,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
         };
       },
     }));
-    return [...tools, this.createSecretTool()];
+    return [...tools, { ...NATIVE_TOOL_METADATA[CREATE_SECRET_TOOL_NAME], ...this.createSecretTool() }];
   }
 
   /** env_criar_secret: opens the create-variable screen for the user. The value never passes through the agent. */
@@ -700,7 +707,49 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     } catch (err) {
       console.error("[environment-variables] Failed to sync tools with AI Ecosystem:", err);
     }
+    void this.syncToolIndex();
   }
+
+  private indexRunning = false;
+  private indexAgain = false;
+
+  /**
+   * Writes the API tools (mcp.db packages and tool notes) into this module's tools.db. They are not registered
+   * in MCP tools/list: tools_find finds them and tools_run runs them through the `tool-runner` service.
+   * Calls that arrive during a sync are coalesced into one more run.
+   */
+  private async syncToolIndex(): Promise<void> {
+    const api = this.connector?.api;
+    if (!api?.toolIndex) return;
+    if (this.indexRunning) {
+      this.indexAgain = true;
+      return;
+    }
+    this.indexRunning = true;
+    try {
+      do {
+        this.indexAgain = false;
+        const entries = await this.tools.apiIndexEntries();
+        await api.toolIndex.sync(MODULE_ID, entries);
+      } while (this.indexAgain);
+    } catch (err) {
+      console.error("[environment-variables] Failed to sync the tool index:", err);
+    } finally {
+      this.indexRunning = false;
+    }
+  }
+
+  /** `tool-runner:environment-variables`: runs indexed API tools for tools_run (secrets resolved by the broker). */
+  private readonly toolRunner: IndexedToolRunner = {
+    run: async (id, args, ctx) => {
+      const res = await executeMcpToolCall("run_vault_tool", { name: id, arguments: args }, {
+        broker: this.broker,
+        client: this.resolveHubClient(ctx.client),
+        tools: this.tools,
+      });
+      return { content: res.content, structuredContent: res.structuredContent, isError: res.isError };
+    },
+  };
 
   private async handleEcosystemConnected(api: AIEcosystemAPI): Promise<void> {
     if (this.server) {
@@ -736,6 +785,19 @@ export default class EnvironmentVariablesPlugin extends Plugin {
         .catch((err) => console.error("[environment-variables] Client export to AI Ecosystem failed:", err));
     }
 
+    this.disposeToolRunner?.();
+    const runnerDisposer = api.registerService<IndexedToolRunner>(TOOL_RUNNER_SERVICE, MODULE_ID, this.toolRunner);
+    this.disposeToolRunner =
+      typeof runnerDisposer === "function"
+        ? runnerDisposer
+        : () => {
+            try {
+              api.unregisterService(TOOL_RUNNER_SERVICE, MODULE_ID);
+            } catch {
+              // Ignore
+            }
+          };
+
     this.disposeServiceListener?.();
     this.disposeServiceListener = api.onServiceChange((serviceName, available) => {
       if (available) {
@@ -763,6 +825,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.disposeServiceListener = undefined;
     this.disposeSecretService?.();
     this.disposeSecretService = undefined;
+    this.disposeToolRunner?.();
+    this.disposeToolRunner = undefined;
     this.emitServerChange();
   }
 
