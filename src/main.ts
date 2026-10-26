@@ -1116,10 +1116,29 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   // ---------- MCP groups ----------
 
   /** Every MCP group with its tool count and request count, computed fresh from the registry and the audit log. */
+  private cachedGroupStats: McpGroupStats[] | null = null;
+  private cachedStatsVersions = { registry: -1, audit: -1, groupsSig: "" };
+
   mcpGroupStats(): McpGroupStats[] {
+    const groupsSig = JSON.stringify(this.data.mcpGroups);
+    if (
+      this.cachedGroupStats &&
+      this.cachedStatsVersions.registry === this.registry.version &&
+      this.cachedStatsVersions.audit === this.audit.version &&
+      this.cachedStatsVersions.groupsSig === groupsSig
+    ) {
+      return this.cachedGroupStats;
+    }
+
     const entries = this.registry.list();
     const audit = this.audit.list();
-    return this.data.mcpGroups.map((g) => computeMcpGroupStats(g, entries, this.toolSource, audit));
+    this.cachedGroupStats = this.data.mcpGroups.map((g) => computeMcpGroupStats(g, entries, this.toolSource, audit));
+    this.cachedStatsVersions = {
+      registry: this.registry.version,
+      audit: this.audit.version,
+      groupsSig,
+    };
+    return this.cachedGroupStats;
   }
 
   async addMcpGroup(group: McpGroupConfig): Promise<void> {

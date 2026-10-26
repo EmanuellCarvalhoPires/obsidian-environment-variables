@@ -48,6 +48,7 @@ export class ToolRegistry {
   private running: Promise<void> | null = null;
   private pending = false;
   private signature = "";
+  public version: number = 0;
 
   /** Parsed tool notes by path, before duplicates, instances and statuses are applied. */
   private parsed = new Map<string, ToolEntry>();
@@ -315,6 +316,7 @@ export class ToolRegistry {
     const sig = JSON.stringify(this.entries);
     if (sig === this.signature) return;
     this.signature = sig;
+    this.version++;
     for (const l of this.listeners) l();
   }
 }

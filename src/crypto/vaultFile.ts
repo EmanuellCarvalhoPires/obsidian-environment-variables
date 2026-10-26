@@ -42,12 +42,19 @@ export interface VaultEnvelopeV1 {
   data: string;
 }
 
+export interface RecoveryDescriptor {
+  kdf: KdfDescriptor;
+  cipher: { name: "AES-256-GCM"; iv: string };
+  data: string;
+}
+
 export interface VaultEnvelopeV2 {
   format: typeof VAULT_FORMAT;
   version: 2;
   kdf: KdfDescriptor;
   cipher: { name: "AES-256-GCM"; iv: string };
   data: string;
+  recovery?: RecoveryDescriptor;
 }
 
 export type VaultEnvelope = VaultEnvelopeV1 | VaultEnvelopeV2;
@@ -160,6 +167,21 @@ export function availableKdfs(): string[] {
 
 export const DEFAULT_KDF = pbkdf2Sha256.name;
 
+export function generateRecoveryKey(): string {
+  const bytes = randomBytes(16);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  const upper = hex.toUpperCase();
+  const chunks = upper.match(/.{4}/g) ?? [upper];
+  return chunks.join("-");
+}
+
+export function normalizeRecoveryKey(key: string): string {
+  return key.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+}
+
 // ---------- key derivation ----------
 
 export async function deriveKey(
@@ -188,19 +210,36 @@ function associatedData(version: number, kdf: KdfDescriptor, iv: string): Uint8A
 // ---------- encrypt / decrypt ----------
 
 /** Always writes the current version. */
-export async function encryptPayload(payload: unknown, derived: DerivedKey): Promise<string> {
+export async function encryptPayload(payload: unknown, derived: DerivedKey, recoveryDerived?: DerivedKey): Promise<string> {
   const iv = toBase64(randomBytes(12));
   const plaintext = encoder.encode(JSON.stringify(payload));
   try {
     const ciphertext = new Uint8Array(
       await subtle().encrypt({ name: "AES-GCM", iv: fromBase64(iv), additionalData: associatedData(VAULT_VERSION, derived.kdf, iv) }, derived.key, plaintext),
     );
+    let recovery: RecoveryDescriptor | undefined;
+    if (recoveryDerived) {
+      const recIv = toBase64(randomBytes(12));
+      const recCiphertext = new Uint8Array(
+        await subtle().encrypt(
+          { name: "AES-GCM", iv: fromBase64(recIv), additionalData: associatedData(VAULT_VERSION, recoveryDerived.kdf, recIv) },
+          recoveryDerived.key,
+          plaintext,
+        ),
+      );
+      recovery = {
+        kdf: recoveryDerived.kdf,
+        cipher: { name: "AES-256-GCM", iv: recIv },
+        data: toBase64(recCiphertext),
+      };
+    }
     const envelope: VaultEnvelopeV2 = {
       format: VAULT_FORMAT,
       version: 2,
       kdf: derived.kdf,
       cipher: { name: "AES-256-GCM", iv },
       data: toBase64(ciphertext),
+      ...(recovery ? { recovery } : {}),
     };
     return JSON.stringify(envelope, null, 2);
   } finally {
@@ -235,6 +274,7 @@ export interface DecryptedVault<T> {
   derived: DerivedKey;
   /** The file was written in an older version and should be saved again. */
   needsUpgrade: boolean;
+  recovered?: boolean;
 }
 
 export async function decryptVault<T>(fileText: string, password: string): Promise<DecryptedVault<T>> {
@@ -252,6 +292,28 @@ export async function decryptVault<T>(fileText: string, password: string): Promi
   try {
     plaintext = new Uint8Array(await subtle().decrypt(params, derived.key, fromBase64(env.data)));
   } catch {
+    // If password decryption failed and recovery descriptor is present, try recovery key
+    if (env.version === 2 && env.recovery) {
+      const norm = normalizeRecoveryKey(password);
+      if (norm.length === 32) {
+        try {
+          const recDerived = await deriveKey(norm, {
+            kdf: env.recovery.kdf.name,
+            params: env.recovery.kdf.params,
+            salt: fromBase64(env.recovery.kdf.salt),
+          });
+          const recParams: AesGcmParams = {
+            name: "AES-GCM",
+            iv: fromBase64(env.recovery.cipher.iv),
+            additionalData: associatedData(env.version, env.recovery.kdf, env.recovery.cipher.iv),
+          };
+          plaintext = new Uint8Array(await subtle().decrypt(recParams, recDerived.key, fromBase64(env.recovery.data)));
+          return { payload: JSON.parse(decoder.decode(plaintext)) as T, derived: recDerived, needsUpgrade: false, recovered: true };
+        } catch {
+          // Fall through to WrongPasswordError
+        }
+      }
+    }
     throw new WrongPasswordError();
   }
   try {

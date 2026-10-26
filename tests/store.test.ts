@@ -64,10 +64,40 @@ describe("SecretStore", () => {
     expect(store.get("JIRA_ACME")?.value).toBe(secretInput().value);
   });
 
-  it("requires a 12-character master password", async () => {
+  it("requires an 8-character master password", async () => {
     const store = new SecretStore(new MemoryIO(), { iterations: 1000 });
-    await expect(store.create("short")).rejects.toThrow(/12/);
+    await expect(store.create("short")).rejects.toThrow(/8/);
     expect(passwordStrength("short")).toBe(0);
     expect(passwordStrength("Longer-Password-123!")).toBeGreaterThanOrEqual(3);
+  });
+  it("creates a vault and returns a recovery key", async () => {
+    const io = new MemoryIO();
+    const store = new SecretStore(io, { iterations: 1000 });
+    const recoveryKey = await store.create("correct horse battery staple");
+    expect(recoveryKey).toMatch(/^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/);
+    expect(store.isUnlocked).toBe(true);
+    await store.add(secretInput());
+
+    // Recover using recovery code and change password
+    const newRecovery = await store.recoverWithCode(recoveryKey, "a-new-master-password");
+    expect(newRecovery).toBeDefined();
+    store.lock();
+    await store.unlock("a-new-master-password");
+    expect(store.list()).toHaveLength(1);
+    expect(store.get("JIRA_ACME")?.value).toBe(secretInput().value);
+  });
+
+  it("resets a vault", async () => {
+    let deleted = false;
+    const io = {
+      content: "some-encrypted-stuff" as string | null,
+      async read() { return this.content; },
+      async write(c: string) { this.content = c; },
+      async delete() { this.content = null; deleted = true; }
+    };
+    const store = new SecretStore(io as any, { iterations: 1000 });
+    await store.resetVault();
+    expect(deleted).toBe(true);
+    expect(await store.exists()).toBe(false);
   });
 });
