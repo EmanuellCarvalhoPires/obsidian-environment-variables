@@ -76,6 +76,41 @@ export interface HubToolAnnotations {
   openWorldHint?: boolean;
 }
 
+export type ToolEffect = "leitura" | "cofre" | "externo";
+export type ToolExposure = "fixa" | "indice";
+export type ToolIndexKind = "tool" | "script" | "template" | "api";
+
+/** What a module writes into its tools.db through `api.toolIndex.sync` (AI Ecosystem API 1.1). */
+export interface ToolIndexEntry {
+  name: string;
+  title?: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+  annotations?: HubToolAnnotations;
+  kind?: ToolIndexKind;
+  categoria?: string;
+  tags?: string[];
+  resumo?: string;
+  efeito?: ToolEffect;
+  exposicao?: ToolExposure;
+  aprovacao?: string;
+  exemplo?: Record<string, unknown>;
+}
+
+export interface ToolIndexApi {
+  sync(moduleId: string, entries: ToolIndexEntry[]): Promise<void>;
+}
+
+/**
+ * Service `tool-runner:<module>`: runs index entries that are not registered MCP tools.
+ * `tools_run` calls it when the id is in this module's tools.db but not in the live registry.
+ */
+export interface IndexedToolRunner {
+  run(id: string, args: Record<string, unknown>, ctx: HubCallContext): Promise<HubToolResult>;
+}
+
+export const TOOL_RUNNER_SERVICE = `tool-runner:environment-variables`;
+
 export interface HubTool {
   name: string;
   title?: string;
@@ -85,6 +120,16 @@ export interface HubTool {
   annotations?: HubToolAnnotations;
   /** Stays visible while the module still waits for its set-up skill (AI Ecosystem hides the other tools of such a module). */
   availableDuringSetup?: boolean;
+  /** Index metadata (API 1.1). All optional. */
+  categoria?: string;
+  tags?: string[];
+  /** One line, up to 100 characters. */
+  resumo?: string;
+  efeito?: ToolEffect;
+  exposicao?: ToolExposure;
+  /** Question template with {arg} placeholders, "obrigatoria" or "dispensada". */
+  aprovacao?: string;
+  exemplo?: Record<string, unknown>;
   handler: (args: Record<string, unknown>, ctx: HubCallContext) => Promise<HubToolResult> | HubToolResult;
 }
 
@@ -148,6 +193,8 @@ export type ServiceChangeListener = (serviceName: string, available: boolean) =>
 export interface AIEcosystemAPI {
   readonly apiVersion: number;
   readonly version: string;
+  /** API 1.1. Absent in older AI Ecosystem versions. */
+  readonly toolIndex?: ToolIndexApi;
   registerModule(registration: ModuleRegistration): RegisterResult | (() => void);
   unregisterModule(moduleId: string): void;
   updateTools(moduleId: string, tools: HubTool[]): void;

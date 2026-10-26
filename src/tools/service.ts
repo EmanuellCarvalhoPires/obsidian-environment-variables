@@ -1,9 +1,11 @@
 // Runs vault tools and exposes them (plus the management tools) to the MCP server and the REST API.
 
+import { ToolIndexEntry } from "../ecosystem/moduleConnector";
 import { AuditLog } from "../audit/auditLog";
 import { Broker, BrokerSuccess } from "../secrets/broker";
 import { RequestInput } from "../secrets/prepare";
 import { ClientContext } from "../server/clients";
+import { buildApiIndexEntries } from "./apiIndex";
 import { inputSchema, validateArgs } from "./definition";
 import { ToolRegistry } from "./registry";
 import { parseRequestBlock, resolveRequest, servicePlaceholderNames } from "./requestNote";
@@ -410,6 +412,22 @@ export class ToolsService {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * The tools.db entries (kind "api") of every ready request tool: package tools (mcp.db) and tool notes.
+   * Method and path come from the mcp.db row or from the request note. Empty when vault tools are off.
+   */
+  async apiIndexEntries(): Promise<ToolIndexEntry[]> {
+    if (!this.enabled()) return [];
+    await this.ready();
+    return buildApiIndexEntries(this.deps.registry.list(), async (entry) => {
+      const row = this.deps.dbManager?.getRequestForTool(entry.name);
+      if (row) return { method: row.method, path: row.path };
+      if (!entry.request) return undefined;
+      const note = this.deps.source.resolve(entry.request, entry.notePath);
+      return note ? endpointOf(await this.deps.source.read(note), note.frontmatter) : undefined;
+    });
   }
 
   private endpointIndex(): Promise<EndpointPattern[]> {

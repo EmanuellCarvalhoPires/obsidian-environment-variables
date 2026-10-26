@@ -16,6 +16,9 @@ import { McpAppModal } from "./mcpAppModal";
 import { McpDownloadModal } from "./mcpDownloadModal";
 import { McpGroupModal } from "./mcpGroupModal";
 import { ToolRunModal } from "./toolModals";
+import { ChangePasswordModal, ForgotPasswordModal, ShowRecoveryKeyModal } from "./recoveryModals";
+import { lazySection } from "./lazySection";
+import { paginate, renderPaginationControls } from "./pagination";
 
 export const VIEW_TYPE = "environment-variables-view";
 export const ICON_UNLOCKED = "key-round";
@@ -30,8 +33,19 @@ export class EnvironmentVariablesView extends ItemView {
   private clientsOpen: boolean | undefined;
   private toolsOpen: boolean | undefined;
   private howToOpen = false;
+  private mcpGroupsOpen: boolean | undefined;
   private logOpen = false;
   private guideVisible = false;
+  private toolsQuery = "";
+  private toolsPage = 1;
+  private logPage = 1;
+  private debounceTimer: number | undefined;
+  private serverHeaderEl!: HTMLElement;
+  private secretsEl!: HTMLElement;
+  private valuesEl!: HTMLElement;
+  private mcpEl!: HTMLElement;
+  private mcpGroupsEl!: HTMLElement;
+  private logEl!: HTMLElement;
   private connecting: IntegrationId | null = null;
   private detected = new Map<IntegrationId, boolean>();
 
@@ -56,20 +70,53 @@ export class EnvironmentVariablesView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.unsubscribers.push(
-      this.plugin.store.onChange(() => void this.refresh()),
-      this.plugin.audit.onChange(() => {
-        if (this.plugin.store.isUnlocked) void this.refresh();
+      this.plugin.store.onChange(() => {
+        this.debounce(() => {
+          if (this.plugin.store.isUnlocked) {
+            this.updateSecrets();
+            this.updateValues();
+          } else {
+            void this.refresh();
+          }
+        });
       }),
-      this.plugin.onServerChange(() => void this.refresh()),
-      this.plugin.registry.onChange(() => void this.refresh()),
+      this.plugin.audit.onChange(() => {
+        if (this.plugin.store.isUnlocked) {
+          this.debounce(() => this.updateLog());
+        }
+      }),
+      this.plugin.onServerChange(() => {
+        this.debounce(() => {
+          this.updateServerHeader();
+          this.updateMcpGroups();
+        });
+      }),
+      this.plugin.registry.onChange(() => {
+        this.debounce(() => {
+          this.updateMcp();
+          this.updateMcpGroups();
+        });
+      }),
     );
     this.containerEl.addEventListener("pointerdown", () => this.plugin.touch());
     await this.refresh();
   }
 
   async onClose(): Promise<void> {
+    if (this.debounceTimer !== undefined) {
+      window.clearTimeout(this.debounceTimer);
+      this.debounceTimer = undefined;
+    }
     for (const u of this.unsubscribers) u();
     this.unsubscribers = [];
+  }
+
+  private debounce(fn: () => void, ms = 150): void {
+    if (this.debounceTimer !== undefined) window.clearTimeout(this.debounceTimer);
+    this.debounceTimer = window.setTimeout(() => {
+      this.debounceTimer = undefined;
+      fn();
+    }, ms);
   }
 
   async refresh(): Promise<void> {
@@ -112,8 +159,9 @@ export class EnvironmentVariablesView extends ItemView {
       if (pass.value !== confirm.value) return this.showError(t("view.create.mismatch"));
       if (pass.value.length < MIN_PASSWORD_LENGTH) return this.showError(t("strength.0"));
       await this.runBusy(btn, async () => {
-        await this.plugin.store.create(pass.value);
+        const recoveryKey = await this.plugin.store.create(pass.value);
         pass.value = confirm.value = "";
+        new ShowRecoveryKeyModal(this.app, recoveryKey).open();
       });
     };
     btn.addEventListener("click", () => void submit());
@@ -145,6 +193,17 @@ export class EnvironmentVariablesView extends ItemView {
     };
     btn.addEventListener("click", () => void submit());
     pass.addEventListener("keydown", (e) => e.key === "Enter" && void submit());
+
+    const forgotLink = box.createEl("a", { text: t("view.unlock.forgot"), cls: "ev-muted" });
+    forgotLink.style.display = "block";
+    forgotLink.style.marginTop = "14px";
+    forgotLink.style.cursor = "pointer";
+    forgotLink.style.fontSize = "0.9em";
+    forgotLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      new ForgotPasswordModal(this.app, this.plugin.store, () => void this.refresh()).open();
+    });
+
     window.setTimeout(() => pass.focus(), 0);
   }
 
@@ -179,12 +238,55 @@ export class EnvironmentVariablesView extends ItemView {
   // ---------- unlocked: three sections ----------
 
   private renderUnlocked(root: HTMLElement): void {
-    this.renderServerHeader(root);
-    this.renderSecrets(root);
-    this.renderValues(root);
-    this.renderMcp(root);
-    this.renderMcpGroups(root);
-    this.renderLog(root);
+    this.serverHeaderEl = root.createDiv({ cls: "ev-section-server" });
+    this.secretsEl = root.createDiv({ cls: "ev-section-secrets" });
+    this.valuesEl = root.createDiv({ cls: "ev-section-values" });
+    this.mcpEl = root.createDiv({ cls: "ev-section-mcp-wrap" });
+    this.mcpGroupsEl = root.createDiv({ cls: "ev-section-mcpgroups-wrap" });
+    this.logEl = root.createDiv({ cls: "ev-section-log-wrap" });
+
+    this.updateServerHeader();
+    this.updateSecrets();
+    this.updateValues();
+    this.updateMcp();
+    this.updateMcpGroups();
+    this.updateLog();
+  }
+
+  private updateServerHeader(): void {
+    if (!this.serverHeaderEl) return;
+    this.serverHeaderEl.empty();
+    this.renderServerHeader(this.serverHeaderEl);
+  }
+
+  private updateSecrets(): void {
+    if (!this.secretsEl) return;
+    this.secretsEl.empty();
+    this.renderSecrets(this.secretsEl);
+  }
+
+  private updateValues(): void {
+    if (!this.valuesEl) return;
+    this.valuesEl.empty();
+    this.renderValues(this.valuesEl);
+  }
+
+  private updateMcp(): void {
+    if (!this.mcpEl) return;
+    this.mcpEl.empty();
+    this.renderMcp(this.mcpEl);
+  }
+
+  private updateMcpGroups(): void {
+    if (!this.mcpGroupsEl) return;
+    this.mcpGroupsEl.empty();
+    this.renderMcpGroups(this.mcpGroupsEl);
+  }
+
+  private updateLog(): void {
+    if (!this.logEl) return;
+    this.logEl.empty();
+    this.renderLog(this.logEl);
   }
 
   /** The state of the AI Ecosystem connection (or legacy transition server), always at the top of the panel. */
@@ -231,6 +333,7 @@ export class EnvironmentVariablesView extends ItemView {
     const section = root.createDiv({ cls: "ev-section" });
     const heading = sectionHeading(section, t("view.section.env"));
     badge(heading.nameEl, t("view.status.unlocked"), "ev-badge-ok", ICON_UNLOCKED);
+    heading.addButton((b) => b.setButtonText(t("view.changePassword")).onClick(() => new ChangePasswordModal(this.app, this.plugin.store).open()));
     heading.addButton((b) => b.setButtonText(t("view.lockNow")).onClick(() => this.plugin.lock()));
 
     const toolbar = section.createDiv({ cls: "ev-toolbar" });
@@ -344,14 +447,32 @@ export class EnvironmentVariablesView extends ItemView {
     sectionHeading(section, t("view.section.mcp"));
 
     const clients = this.plugin.data.clients;
-    this.renderClients(collapsible(section, t("view.clients.title"), this.clientsOpen ?? clients.length === 0, (open) => (this.clientsOpen = open)));
+    lazySection(
+      section,
+      t("view.clients.title"),
+      this.clientsOpen ?? clients.length === 0,
+      (open) => (this.clientsOpen = open),
+      (body) => this.renderClients(body),
+    );
 
     const settings = this.plugin.data.settings;
     const entries = this.plugin.registry.list();
     const toolsOpen = this.toolsOpen ?? (settings.toolsEnabled && entries.some((e) => e.status !== "ready"));
-    this.renderTools(collapsible(section, t("view.tools.title"), toolsOpen, (open) => (this.toolsOpen = open)));
+    lazySection(
+      section,
+      t("view.tools.title"),
+      toolsOpen,
+      (open) => (this.toolsOpen = open),
+      (body) => this.renderTools(body),
+    );
 
-    this.renderHowTo(collapsible(section, t("view.howto.title"), this.howToOpen, (open) => (this.howToOpen = open)));
+    lazySection(
+      section,
+      t("view.howto.title"),
+      this.howToOpen,
+      (open) => (this.howToOpen = open),
+      (body) => this.renderHowTo(body),
+    );
   }
 
   /** Short instructions for each feature of the plugin, in the panel's language. */
@@ -375,7 +496,7 @@ export class EnvironmentVariablesView extends ItemView {
 
   private renderTools(body: HTMLElement): void {
     const settings = this.plugin.data.settings;
-    const entries = this.plugin.registry.list();
+    const allEntries = this.plugin.registry.list();
 
     const tools = new Setting(body)
       .setName(t("settings.toolsEnabled"))
@@ -398,23 +519,71 @@ export class EnvironmentVariablesView extends ItemView {
     subHeading(body, t("view.tools.guideTitle"), { info: t("view.tools.guideBody") });
     this.renderPrompt(body);
 
-    subHeading(body, t("view.tools.listTitle"), { count: entries.length });
-    if (entries.length === 0) {
+    subHeading(body, t("view.tools.listTitle"), { count: allEntries.length });
+    if (allEntries.length === 0) {
       body.createDiv({ text: t("view.tools.empty", { tag: settings.toolTag }), cls: "ev-muted ev-empty" });
       return;
     }
-    this.renderToolTable(body, entries);
+
+    // Filter toolbar
+    const toolbar = body.createDiv({ cls: "ev-toolbar" });
+    const search = toolbar.createEl("input", {
+      type: "search",
+      placeholder: t("view.search"),
+      value: this.toolsQuery,
+    });
+
+    const tableContainer = body.createDiv({ cls: "ev-tools-container" });
+
+    const updateToolList = () => {
+      tableContainer.empty();
+      const q = this.toolsQuery.trim().toLowerCase();
+      const filtered = q
+        ? allEntries.filter(
+            (e) =>
+              e.name.toLowerCase().includes(q) ||
+              (e.mcpName && e.mcpName.toLowerCase().includes(q)) ||
+              (e.description && e.description.toLowerCase().includes(q)),
+          )
+        : allEntries;
+
+      const paginated = paginate(filtered, this.toolsPage, 50);
+      this.renderToolTable(tableContainer, paginated.pageItems);
+
+      renderPaginationControls(
+        tableContainer,
+        paginated.hasMore,
+        paginated.shownCount,
+        paginated.total,
+        () => {
+          this.toolsPage++;
+          updateToolList();
+        },
+      );
+    };
+
+    search.addEventListener("input", () => {
+      this.toolsQuery = search.value;
+      this.toolsPage = 1;
+      updateToolList();
+    });
+
+    updateToolList();
   }
 
-  /** One table row per tool: with thousands of tools (mcp.db packages) a row of settings controls per tool is too heavy. */
+  /** One table row per tool: optimized with event delegation and native controls */
   private renderToolTable(body: HTMLElement, entries: ToolEntry[]): void {
     const wrap = body.createDiv({ cls: "ev-log-wrap ev-tools-wrap" });
     const table = wrap.createEl("table", { cls: "ev-log ev-tools" });
     const head = table.createEl("thead").createEl("tr");
     for (const col of ["name", "package", "kind", "status", "flags", "problems", "actions"] as const) head.createEl("th", { text: t(`view.tools.col.${col}`) });
     const tbody = table.createEl("tbody");
+
+    const entriesMap = new Map<string, ToolEntry>();
+
     for (const entry of entries) {
-      const tr = tbody.createEl("tr");
+      entriesMap.set(entry.name, entry);
+      const tr = tbody.createEl("tr", { attr: { "data-tool-name": entry.name } });
       tr.createEl("td", { cls: "ev-item-name", text: entry.name, attr: entry.description ? { title: entry.description } : {} });
       tr.createEl("td", { text: entry.mcpName ?? "" });
       tr.createEl("td", { text: entry.kind ?? "" });
@@ -426,15 +595,37 @@ export class EnvironmentVariablesView extends ItemView {
       for (const p of entry.problems) iconLine(problems, "x-circle", p, "ev-error");
       for (const w of entry.warnings) iconLine(problems, "alert-triangle", w, "ev-warning");
       const actions = tr.createEl("td", { cls: "ev-tools-actions" });
-      const open = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.tools.open") } });
+      const open = actions.createEl("button", {
+        cls: "clickable-icon ev-action-open",
+        attr: { "aria-label": t("view.tools.open"), "data-action": "open" },
+      });
       setIcon(open, "file-text");
-      open.addEventListener("click", () => void this.app.workspace.openLinkText(entry.notePath, "", false));
       if (entry.status === "ready") {
-        const run = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": t("view.tools.run") } });
+        const run = actions.createEl("button", {
+          cls: "clickable-icon ev-action-run",
+          attr: { "aria-label": t("view.tools.run"), "data-action": "run" },
+        });
         setIcon(run, "play");
-        run.addEventListener("click", () => new ToolRunModal(this.app, entry, (args) => this.plugin.tools.run(entry.name, args, this.plugin.localClient)).open());
       }
     }
+
+    // Event delegation on tbody instead of per-button listeners
+    tbody.addEventListener("click", (evt: MouseEvent) => {
+      const target = (evt.target as HTMLElement).closest("button[data-action]") as HTMLElement | null;
+      if (!target) return;
+      const tr = target.closest("tr[data-tool-name]") as HTMLElement | null;
+      const toolName = tr?.getAttribute("data-tool-name");
+      if (!toolName) return;
+      const entry = entriesMap.get(toolName);
+      if (!entry) return;
+
+      const action = target.getAttribute("data-action");
+      if (action === "open") {
+        void this.app.workspace.openLinkText(entry.notePath, "", false);
+      } else if (action === "run" && entry.status === "ready") {
+        new ToolRunModal(this.app, entry, (args) => this.plugin.tools.run(entry.name, args, this.plugin.localClient)).open();
+      }
+    });
   }
 
   private renderPrompt(body: HTMLElement): void {
@@ -582,22 +773,31 @@ export class EnvironmentVariablesView extends ItemView {
 
     const apps = this.plugin.data.mcpApps;
     const stats = this.plugin.mcpGroupStats();
-    const byApp = new Map<string, McpGroupStats[]>();
-    const standalone: McpGroupStats[] = [];
-    for (const group of stats) {
-      if (group.appId && apps.some((a) => a.id === group.appId)) {
-        const list = byApp.get(group.appId);
-        if (list) list.push(group);
-        else byApp.set(group.appId, [group]);
-      } else standalone.push(group);
-    }
 
-    if (apps.length === 0 && standalone.length === 0) {
-      section.createDiv({ text: t("view.mcpGroups.empty"), cls: "ev-muted ev-empty" });
-      return;
-    }
-    for (const app of apps) this.renderMcpAppCard(section, app, byApp.get(app.id) ?? []);
-    for (const group of standalone) this.renderMcpGroupCard(section, group);
+    lazySection(
+      section,
+      t("view.section.mcpGroups"),
+      this.mcpGroupsOpen ?? (apps.length + stats.length > 0),
+      (open) => (this.mcpGroupsOpen = open),
+      (body) => {
+        const byApp = new Map<string, McpGroupStats[]>();
+        const standalone: McpGroupStats[] = [];
+        for (const group of stats) {
+          if (group.appId && apps.some((a) => a.id === group.appId)) {
+            const list = byApp.get(group.appId);
+            if (list) list.push(group);
+            else byApp.set(group.appId, [group]);
+          } else standalone.push(group);
+        }
+
+        if (apps.length === 0 && standalone.length === 0) {
+          body.createDiv({ text: t("view.mcpGroups.empty"), cls: "ev-muted ev-empty" });
+          return;
+        }
+        for (const app of apps) this.renderMcpAppCard(body, app, byApp.get(app.id) ?? []);
+        for (const group of standalone) this.renderMcpGroupCard(body, group);
+      },
+    );
   }
 
   private openMcpGroupModal(existing: McpGroupStats | null): void {
@@ -723,7 +923,7 @@ export class EnvironmentVariablesView extends ItemView {
 
   private renderLog(root: HTMLElement): void {
     const section = root.createDiv({ cls: "ev-section" });
-    const entries = this.plugin.audit.list().slice(0, 100);
+    const entries = this.plugin.audit.listRecent(Math.max(50, this.logPage * 50));
     const heading = sectionHeading(section, t("view.section.logs"));
     if (this.plugin.isEcosystemConnected) {
       heading.addButton((b) => b.setButtonText(t("view.log.live")).onClick(() => void this.plugin.openEcosystemInspector()));
@@ -732,26 +932,54 @@ export class EnvironmentVariablesView extends ItemView {
       b
         .setButtonText(t("view.log.clear"))
         .setDisabled(entries.length === 0)
-        .onClick(() => this.plugin.audit.clear()),
+        .onClick(() => {
+          this.plugin.audit.clear();
+          this.logPage = 1;
+        }),
     );
     if (entries.length === 0) {
       section.createDiv({ text: t("view.log.empty"), cls: "ev-muted ev-empty" });
       return;
     }
-    const body = collapsible(section, t("view.log.show", { n: entries.length }), this.logOpen, (open) => (this.logOpen = open));
-    const wrap = body.createDiv({ cls: "ev-log-wrap" });
-    const table = wrap.createEl("table", { cls: "ev-log" });
-    const head = table.createEl("thead").createEl("tr");
-    for (const col of ["time", "client", "action", "variables", "result"] as const) head.createEl("th", { text: t(`view.log.col.${col}`) });
-    const tbody = table.createEl("tbody");
-    for (const e of entries) {
-      const tr = tbody.createEl("tr", { cls: `ev-log-${e.outcome}` });
-      tr.createEl("td", { text: new Date(e.time).toLocaleString() });
-      tr.createEl("td", { text: e.client });
-      tr.createEl("td", { text: auditActionLabel(e).trim() });
-      tr.createEl("td", { text: e.secrets.join(", ") });
-      tr.createEl("td", { text: e.status ? `${e.outcome} ${e.status}` : e.outcome, attr: { title: e.detail ?? "" } });
-    }
+    lazySection(
+      section,
+      t("view.log.show", { n: entries.length }),
+      this.logOpen,
+      (open) => (this.logOpen = open),
+      (body) => {
+        const tableContainer = body.createDiv();
+        const renderAuditPage = () => {
+          tableContainer.empty();
+          const currentEntries = this.plugin.audit.listRecent(this.logPage * 50);
+          const paginated = paginate(currentEntries, this.logPage, 50);
+          const wrap = tableContainer.createDiv({ cls: "ev-log-wrap" });
+          const table = wrap.createEl("table", { cls: "ev-log" });
+          const head = table.createEl("thead").createEl("tr");
+          for (const col of ["time", "client", "action", "variables", "result"] as const) head.createEl("th", { text: t(`view.log.col.${col}`) });
+          const tbody = table.createEl("tbody");
+          for (const e of paginated.pageItems) {
+            const tr = tbody.createEl("tr", { cls: `ev-log-${e.outcome}` });
+            tr.createEl("td", { text: new Date(e.time).toLocaleString() });
+            tr.createEl("td", { text: e.client });
+            tr.createEl("td", { text: auditActionLabel(e).trim() });
+            tr.createEl("td", { text: e.secrets.join(", ") });
+            tr.createEl("td", { text: e.status ? `${e.outcome} ${e.status}` : e.outcome, attr: { title: e.detail ?? "" } });
+          }
+
+          renderPaginationControls(
+            tableContainer,
+            paginated.hasMore,
+            paginated.shownCount,
+            paginated.total,
+            () => {
+              this.logPage++;
+              renderAuditPage();
+            },
+          );
+        };
+        renderAuditPage();
+      },
+    );
   }
 }
 
@@ -829,13 +1057,3 @@ const HOW_TO_TEMPLATES = [
   ["view.howto.tplBitbucket", "view.howto.tplBitbucketDesc"],
   ["view.howto.tplTrello", "view.howto.tplTrelloDesc"],
 ] as const;
-
-function collapsible(parent: HTMLElement, title: string, open: boolean, onToggle: (open: boolean) => void): HTMLElement {
-  const details = parent.createEl("details", { cls: "ev-group" });
-  details.open = open;
-  details.addEventListener("toggle", () => onToggle(details.open));
-  const summary = details.createEl("summary", { cls: "ev-group-title" });
-  setIcon(summary.createSpan({ cls: "ev-group-chevron" }), "chevron-right");
-  summary.createSpan({ text: title });
-  return details.createDiv({ cls: "ev-group-body" });
-}

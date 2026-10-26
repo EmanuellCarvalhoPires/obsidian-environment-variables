@@ -1,10 +1,12 @@
-import { decryptVault, deriveKey, DerivedKey, DEFAULT_KDF, encryptPayload, KdfParams, kdfProvider } from "../crypto/vaultFile";
+import { decryptVault, deriveKey, DerivedKey, DEFAULT_KDF, encryptPayload, generateRecoveryKey, KdfParams, kdfProvider, normalizeRecoveryKey, parseEnvelope } from "../crypto/vaultFile";
 import { SECRET_NAME_PATTERN, SecretRecord, ValueRecord, VALUE_KINDS, valueMatchesKind, VaultPayload } from "./types";
 
 /** Where the encrypted file lives. The plugin uses the vault adapter; tests use memory. */
 export interface VaultIO {
   read(): Promise<string | null>;
   write(content: string): Promise<void>;
+  delete?(): Promise<void>;
+  backup?(): Promise<string | null>;
 }
 
 export class VaultLockedError extends Error {
@@ -14,7 +16,7 @@ export class VaultLockedError extends Error {
   }
 }
 
-export const MIN_PASSWORD_LENGTH = 12;
+export const MIN_PASSWORD_LENGTH = 8;
 
 export type SecretInput = Omit<SecretRecord, "id" | "createdAt" | "updatedAt" | "lastUsedAt">;
 export type ValueInput = Omit<ValueRecord, "id" | "createdAt" | "updatedAt" | "lastUsedAt">;
@@ -23,6 +25,7 @@ type Listener = () => void;
 
 export class SecretStore {
   private derived: DerivedKey | null = null;
+  private recoveryDerived: DerivedKey | null = null;
   private secrets: SecretRecord[] = [];
   private values: ValueRecord[] = [];
   private listeners = new Set<Listener>();
@@ -54,24 +57,33 @@ export class SecretStore {
     return (await this.io.read()) !== null;
   }
 
-  async create(password: string): Promise<void> {
+  async create(password: string): Promise<string> {
     if (await this.exists()) throw new Error("A vault already exists.");
     assertPassword(password);
+    const recoveryKey = generateRecoveryKey();
+    const normRecovery = normalizeRecoveryKey(recoveryKey);
     this.derived = await deriveKey(password, this.kdfOptions());
+    this.recoveryDerived = await deriveKey(normRecovery, this.kdfOptions());
     this.secrets = [];
     this.values = [];
     await this.persist();
     this.emit();
+    return recoveryKey;
   }
 
   async unlock(password: string): Promise<void> {
     const text = await this.io.read();
     if (text === null) throw new Error("No vault exists yet.");
-    const { payload, derived, needsUpgrade } = await decryptVault<VaultPayload>(text, password);
+    const { payload, derived, needsUpgrade, recovered } = await decryptVault<VaultPayload>(text, password);
     this.derived = derived;
     this.secrets = Array.isArray(payload.secrets) ? payload.secrets : [];
     this.values = Array.isArray(payload.values) ? payload.values : [];
-    // Re-save older files in the current format (same key, new header bound to the ciphertext).
+    const env = parseEnvelope(text);
+    if (env.version === 2 && env.recovery && !recovered) {
+      this.recoveryDerived = { key: null as any, kdf: env.recovery.kdf };
+    } else {
+      this.recoveryDerived = null;
+    }
     if (needsUpgrade) await this.persist();
     this.emit();
   }
@@ -86,6 +98,7 @@ export class SecretStore {
   lock(): void {
     if (!this.derived) return;
     this.derived = null;
+    this.recoveryDerived = null;
     for (const s of this.secrets) {
       s.value = "";
       s.username = undefined;
@@ -104,14 +117,48 @@ export class SecretStore {
     this.emit();
   }
 
-  async changePassword(current: string, next: string): Promise<void> {
+  async changePassword(current: string, next: string): Promise<string> {
     const text = await this.io.read();
     if (text === null) throw new Error("No vault exists yet.");
-    await decryptVault<VaultPayload>(text, current); // throws WrongPasswordError
+    if (current) {
+      await decryptVault<VaultPayload>(text, current);
+    }
     assertPassword(next);
+    const recoveryKey = generateRecoveryKey();
+    const normRecovery = normalizeRecoveryKey(recoveryKey);
     this.derived = await deriveKey(next, this.kdfOptions());
+    this.recoveryDerived = await deriveKey(normRecovery, this.kdfOptions());
     await this.persist();
     this.emit();
+    return recoveryKey;
+  }
+
+  async recoverWithCode(recoveryCode: string, newPassword: string): Promise<string> {
+    const text = await this.io.read();
+    if (text === null) throw new Error("No vault exists yet.");
+    assertPassword(newPassword);
+    const norm = normalizeRecoveryKey(recoveryCode);
+    const { payload } = await decryptVault<VaultPayload>(text, norm);
+    this.secrets = Array.isArray(payload.secrets) ? payload.secrets : [];
+    this.values = Array.isArray(payload.values) ? payload.values : [];
+    const newRecoveryKey = generateRecoveryKey();
+    this.derived = await deriveKey(newPassword, this.kdfOptions());
+    this.recoveryDerived = await deriveKey(normalizeRecoveryKey(newRecoveryKey), this.kdfOptions());
+    await this.persist();
+    this.emit();
+    return newRecoveryKey;
+  }
+
+  async resetVault(): Promise<string | null> {
+    let backupName: string | null = null;
+    if (this.io.backup) {
+      backupName = await this.io.backup();
+    } else if (this.io.delete) {
+      await this.io.delete();
+    }
+    this.lock();
+    this.emit();
+    return backupName;
   }
 
   list(): SecretRecord[] {
@@ -236,7 +283,22 @@ export class SecretStore {
   private async persist(): Promise<void> {
     if (!this.derived) throw new VaultLockedError();
     const payload: VaultPayload = { secrets: this.secrets, values: this.values };
-    await this.io.write(await encryptPayload(payload, this.derived));
+    if (this.recoveryDerived?.key) {
+      await this.io.write(await encryptPayload(payload, this.derived, this.recoveryDerived));
+    } else {
+      const existing = await this.io.read();
+      if (existing) {
+        const env = parseEnvelope(existing);
+        if (env.version === 2 && env.recovery) {
+          const tempJson = await encryptPayload(payload, this.derived);
+          const parsed = JSON.parse(tempJson);
+          parsed.recovery = env.recovery;
+          await this.io.write(JSON.stringify(parsed, null, 2));
+          return;
+        }
+      }
+      await this.io.write(await encryptPayload(payload, this.derived));
+    }
   }
 }
 

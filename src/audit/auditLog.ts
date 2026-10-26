@@ -21,6 +21,7 @@ export const MAX_AUDIT_ENTRIES = 500;
 export class AuditLog {
   private entries: AuditEntry[];
   private listeners = new Set<() => void>();
+  public version: number = 0;
 
   constructor(
     initial: AuditEntry[] = [],
@@ -30,6 +31,7 @@ export class AuditLog {
   }
 
   add(entry: Omit<AuditEntry, "time">): void {
+    this.version++;
     this.entries.push({ time: new Date().toISOString(), ...entry });
     if (this.entries.length > MAX_AUDIT_ENTRIES) this.entries.splice(0, this.entries.length - MAX_AUDIT_ENTRIES);
     void this.persist(this.entries);
@@ -40,7 +42,19 @@ export class AuditLog {
     return [...this.entries].reverse();
   }
 
+  /** Returns at most 'limit' entries in reverse chronological order without cloning the whole array. */
+  listRecent(limit: number): AuditEntry[] {
+    const res: AuditEntry[] = [];
+    const len = this.entries.length;
+    const count = Math.min(len, Math.max(0, limit));
+    for (let i = len - 1; i >= len - count; i--) {
+      res.push(this.entries[i]);
+    }
+    return res;
+  }
+
   clear(): void {
+    this.version++;
     this.entries = [];
     void this.persist(this.entries);
     for (const l of this.listeners) l();
