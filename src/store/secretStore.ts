@@ -80,7 +80,7 @@ export class SecretStore {
     this.values = Array.isArray(payload.values) ? payload.values : [];
     const env = parseEnvelope(text);
     if (env.version === 2 && env.recovery && !recovered) {
-      this.recoveryDerived = { key: null as any, kdf: env.recovery.kdf };
+      this.recoveryDerived = { key: null as unknown as CryptoKey, kdf: env.recovery.kdf };
     } else {
       this.recoveryDerived = null;
     }
@@ -291,7 +291,7 @@ export class SecretStore {
         const env = parseEnvelope(existing);
         if (env.version === 2 && env.recovery) {
           const tempJson = await encryptPayload(payload, this.derived);
-          const parsed = JSON.parse(tempJson);
+          const parsed = JSON.parse(tempJson) as Record<string, unknown>;
           parsed.recovery = env.recovery;
           await this.io.write(JSON.stringify(parsed, null, 2));
           return;

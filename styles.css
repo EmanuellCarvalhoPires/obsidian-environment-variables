@@ -20,6 +20,35 @@
   margin: var(--size-4-2) 0;
 }
 
+.ev-hidden {
+  display: none;
+}
+
+.ev-recovery-key-box {
+  padding: 14px;
+  margin: 12px 0;
+  background-color: var(--background-secondary);
+  border-radius: 6px;
+  font-family: var(--font-monospace);
+  font-size: 1.2em;
+  font-weight: bold;
+  text-align: center;
+  user-select: all;
+}
+
+.ev-forgot-modal .ev-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ev-forgot-link {
+  display: block;
+  margin-top: 14px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
 /* Locked / create */
 .ev-lock-box {
   display: flex;

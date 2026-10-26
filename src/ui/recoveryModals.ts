@@ -20,15 +20,6 @@ export class ShowRecoveryKeyModal extends Modal {
     contentEl.createEl("p", { text: t("view.recovery.showBody"), cls: "ev-muted" });
 
     const keyBox = contentEl.createDiv({ cls: "ev-recovery-key-box" });
-    keyBox.style.padding = "14px";
-    keyBox.style.margin = "12px 0";
-    keyBox.style.backgroundColor = "var(--background-secondary)";
-    keyBox.style.borderRadius = "6px";
-    keyBox.style.fontFamily = "var(--font-monospace)";
-    keyBox.style.fontSize = "1.2em";
-    keyBox.style.fontWeight = "bold";
-    keyBox.style.textAlign = "center";
-    keyBox.style.userSelect = "all";
     keyBox.setText(this.recoveryKey);
 
     new Setting(contentEl)
@@ -79,9 +70,6 @@ export class ForgotPasswordModal extends Modal {
     contentEl.addClass("ev-forgot-modal");
 
     const tabsRow = contentEl.createDiv({ cls: "ev-tabs" });
-    tabsRow.style.display = "flex";
-    tabsRow.style.gap = "8px";
-    tabsRow.style.marginBottom = "16px";
 
     const recoverTabBtn = tabsRow.createEl("button", { text: t("view.forgot.recoverTab") });
     if (this.activeTab === "recover") recoverTabBtn.addClass("mod-cta");
@@ -111,7 +99,7 @@ export class ForgotPasswordModal extends Modal {
     let passVal = "";
     let confirmVal = "";
     let errorEl = container.createDiv({ cls: "ev-error" });
-    errorEl.style.display = "none";
+    errorEl.addClass("ev-hidden");
 
     new Setting(container).setName(t("view.forgot.recoveryCode")).addText((txt) => {
       txt.setPlaceholder("XXXX-XXXX-XXXX-XXXX-...");
@@ -136,15 +124,15 @@ export class ForgotPasswordModal extends Modal {
           .setCta()
           .onClick(() => {
             void (async () => {
-              errorEl.style.display = "none";
+              errorEl.addClass("ev-hidden");
               if (passVal !== confirmVal) {
                 errorEl.setText(t("view.create.mismatch"));
-                errorEl.style.display = "block";
+                errorEl.removeClass("ev-hidden");
                 return;
               }
               if (passVal.length < MIN_PASSWORD_LENGTH) {
                 errorEl.setText(t("strength.0"));
-                errorEl.style.display = "block";
+                errorEl.removeClass("ev-hidden");
                 return;
               }
               b.setDisabled(true);
@@ -154,7 +142,7 @@ export class ForgotPasswordModal extends Modal {
                 new ShowRecoveryKeyModal(this.app, newRec, this.onComplete).open();
               } catch (err) {
                 errorEl.setText(err instanceof Error ? err.message : String(err));
-                errorEl.style.display = "block";
+                errorEl.removeClass("ev-hidden");
                 b.setDisabled(false);
               }
             })();
@@ -224,7 +212,7 @@ export class ChangePasswordModal extends Modal {
     let nextVal = "";
     let confirmVal = "";
     const errorEl = contentEl.createDiv({ cls: "ev-error" });
-    errorEl.style.display = "none";
+    errorEl.addClass("ev-hidden");
 
     new Setting(contentEl).setName(t("view.changeModal.current")).addText((txt) => {
       txt.inputEl.type = "password";
@@ -249,15 +237,15 @@ export class ChangePasswordModal extends Modal {
           .setCta()
           .onClick(() => {
             void (async () => {
-              errorEl.style.display = "none";
+              errorEl.addClass("ev-hidden");
               if (nextVal !== confirmVal) {
                 errorEl.setText(t("view.create.mismatch"));
-                errorEl.style.display = "block";
+                errorEl.removeClass("ev-hidden");
                 return;
               }
               if (nextVal.length < MIN_PASSWORD_LENGTH) {
                 errorEl.setText(t("strength.0"));
-                errorEl.style.display = "block";
+                errorEl.removeClass("ev-hidden");
                 return;
               }
               b.setDisabled(true);
@@ -268,7 +256,7 @@ export class ChangePasswordModal extends Modal {
                 new ShowRecoveryKeyModal(this.app, newRec, this.onDone).open();
               } catch (err) {
                 errorEl.setText(err instanceof Error ? err.message : String(err));
-                errorEl.style.display = "block";
+                errorEl.removeClass("ev-hidden");
                 b.setDisabled(false);
               }
             })();

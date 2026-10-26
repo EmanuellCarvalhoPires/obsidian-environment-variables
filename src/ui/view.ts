@@ -194,11 +194,7 @@ export class EnvironmentVariablesView extends ItemView {
     btn.addEventListener("click", () => void submit());
     pass.addEventListener("keydown", (e) => e.key === "Enter" && void submit());
 
-    const forgotLink = box.createEl("a", { text: t("view.unlock.forgot"), cls: "ev-muted" });
-    forgotLink.style.display = "block";
-    forgotLink.style.marginTop = "14px";
-    forgotLink.style.cursor = "pointer";
-    forgotLink.style.fontSize = "0.9em";
+    const forgotLink = box.createEl("a", { text: t("view.unlock.forgot"), cls: "ev-muted ev-forgot-link" });
     forgotLink.addEventListener("click", (e) => {
       e.preventDefault();
       new ForgotPasswordModal(this.app, this.plugin.store, () => void this.refresh()).open();
@@ -611,9 +607,9 @@ export class EnvironmentVariablesView extends ItemView {
 
     // Event delegation on tbody instead of per-button listeners
     tbody.addEventListener("click", (evt: MouseEvent) => {
-      const target = (evt.target as HTMLElement).closest("button[data-action]") as HTMLElement | null;
+      const target = (evt.target as HTMLElement).closest<HTMLElement>("button[data-action]");
       if (!target) return;
-      const tr = target.closest("tr[data-tool-name]") as HTMLElement | null;
+      const tr = target.closest<HTMLElement>("tr[data-tool-name]");
       const toolName = tr?.getAttribute("data-tool-name");
       if (!toolName) return;
       const entry = entriesMap.get(toolName);
