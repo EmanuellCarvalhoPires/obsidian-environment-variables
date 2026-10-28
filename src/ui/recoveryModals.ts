@@ -168,7 +168,7 @@ export class ForgotPasswordModal extends Modal {
           .setDestructive()
           .onClick(() => {
             if (confirmInput !== "RESET" && confirmInput !== "RESETAR") {
-              new Notice("Confirma??o incorreta. Digite RESET ou RESETAR.");
+              new Notice("Confirmação incorreta. Digite RESET ou RESETAR.");
               return;
             }
             void (async () => {

@@ -89,42 +89,44 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
     this.renderPasswordChange(new Setting(containerEl));
     this.renderStorage(new Setting(containerEl));
 
-    // --- MCP Server ---
-    new Setting(containerEl).setHeading().setName(t("view.section.mcp"));
+    // --- MCP Server (shown only in standalone transition mode) ---
+    if (!this.plugin.isEcosystemConnected) {
+      new Setting(containerEl).setHeading().setName(t("view.section.mcp"));
 
-    new Setting(containerEl)
-      .setName(t("settings.serverEnabled"))
-      .setDesc(t("settings.serverEnabledDesc"))
-      .addToggle((toggle) => {
-        toggle.setValue(s.serverEnabled).onChange(async (val) => {
-          await this.plugin.setServerEnabled(val);
+      new Setting(containerEl)
+        .setName(t("settings.serverEnabled"))
+        .setDesc(t("settings.serverEnabledDesc"))
+        .addToggle((toggle) => {
+          toggle.setValue(s.serverEnabled).onChange(async (val) => {
+            await this.plugin.setServerEnabled(val);
+          });
         });
-      });
 
-    this.addNumberSetting(
-      containerEl,
-      t("settings.port"),
-      t("settings.portDesc"),
-      "port",
-      async () => {
-        await this.plugin.restartServer();
-      },
-    );
+      this.addNumberSetting(
+        containerEl,
+        t("settings.port"),
+        t("settings.portDesc"),
+        "port",
+        async () => {
+          await this.plugin.restartServer();
+        },
+      );
 
-    new Setting(containerEl)
-      .setName(t("settings.serverName"))
-      .setDesc(t("settings.serverNameDesc"))
-      .addText((text) => {
-        text.setValue(s.mcpServerName).onChange(async (val) => {
-          const trimmed = val.trim();
-          if (SERVER_NAME_PATTERN.test(trimmed)) {
-            text.inputEl.removeClass("has-error");
-            await this.plugin.setMcpServerName(trimmed);
-          } else {
-            text.inputEl.addClass("has-error");
-          }
+      new Setting(containerEl)
+        .setName(t("settings.serverName"))
+        .setDesc(t("settings.serverNameDesc"))
+        .addText((text) => {
+          text.setValue(s.mcpServerName).onChange(async (val) => {
+            const trimmed = val.trim();
+            if (SERVER_NAME_PATTERN.test(trimmed)) {
+              text.inputEl.removeClass("has-error");
+              await this.plugin.setMcpServerName(trimmed);
+            } else {
+              text.inputEl.addClass("has-error");
+            }
+          });
         });
-      });
+    }
 
     this.addNumberSetting(containerEl, t("settings.approvalTimeout"), "", "approvalTimeoutSeconds");
     this.addNumberSetting(containerEl, t("settings.timeout"), "", "timeoutSeconds");

@@ -220,9 +220,25 @@ export function validateArgs(params: Record<string, ParamSpec>, args: unknown): 
       continue;
     }
     if (value === undefined || value === null) continue;
-    const err = checkValue(spec, value);
+    let val = value;
+    if (spec.type === "string" && ((typeof val === "number" && Number.isFinite(val)) || typeof val === "boolean")) {
+      val = String(val);
+    }
+    if (key === "page_limit") {
+      if (typeof val !== "number" || !Number.isInteger(val) || val < 1 || val > 1000) {
+        errors.push('"page_limit" must be an integer between 1 and 1000.');
+        continue;
+      }
+    }
+    if (key === "adf") {
+      if (typeof val !== "string") {
+        errors.push('"adf" must be of type string.');
+        continue;
+      }
+    }
+    const err = checkValue(spec, val);
     if (err) errors.push(`"${key}" ${err}`);
-    else out[key] = value;
+    else out[key] = val;
   }
   for (const [key, spec] of Object.entries(params)) {
     if (out[key] !== undefined) continue;

@@ -7,7 +7,7 @@ import { utf8ToBase64 } from "../src/secrets/placeholders";
 import { nodeTransport } from "../src/secrets/transport";
 import { contextOf, createClient, findClient } from "../src/server/clients";
 import { LocalServer } from "../src/server/localServer";
-import { buildGuide } from "../src/tools/guide";
+import { buildGuide, guideIndex, guideTopic } from "../src/tools/guide";
 import { ToolRegistry } from "../src/tools/registry";
 import { ScriptRunner } from "../src/tools/scriptRunner";
 import { ToolsService, ToolsSettings } from "../src/tools/service";
@@ -22,6 +22,8 @@ let lastAuth: string | undefined;
 let lastPath = "";
 let server: LocalServer;
 let token = "";
+let toolsService: ToolsService;
+let fullContext: any;
 let registry: ToolRegistry;
 const source = new MemorySource();
 const audit = new AuditLog();
@@ -64,20 +66,23 @@ beforeAll(async () => {
 
   const broker = new Broker(store, nodeTransport, async () => true, audit, () => ({ timeoutMs: 5000, maxResponseBytes: 1_000_000, maxRedirects: 5 }));
   registry = new ToolRegistry(source, () => ({ enabled: settings.toolsEnabled, toolTag: settings.toolTag, scriptsEnabled: settings.scriptsEnabled }));
-  const guideText = (request?: string) => buildGuide("en", request);
-  const tools = new ToolsService({
+  const guideText = (request?: string, topic?: string) =>
+    topic ? guideTopic("en", topic) : request ? buildGuide("en", request) : guideIndex("en");
+  toolsService = new ToolsService({
     registry,
     source,
     broker,
     runner: new ScriptRunner(),
     audit,
     settings: () => settings,
-    guide: () => guideText(),
+    guide: (topic?: string) => guideText(undefined, topic),
   });
+  const tools = toolsService;
   await registry.refresh();
 
   const full = await createClient("test", { mode: "all" });
   token = full.token;
+  fullContext = contextOf(full.record);
   server = new LocalServer({
     port: PORT,
     broker,
@@ -115,7 +120,7 @@ describe("vault tools over MCP", () => {
 
   it("lists built-in, management and exposed vault tools", async () => {
     const names = (await rpc("tools/list")).result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(["list_secrets", "http_request", "get_tool_authoring_guide", "list_vault_tools", "search_vault_tools", "list_tools", "run_vault_tool", "item_digest", "get_item"]); // vault tools sorted by note path
+    expect(names).toEqual(["list_secrets", "http_request", "get_tool_authoring_guide", "item_digest", "get_item"]); // vault tools sorted by note path
     const getItem = (await rpc("tools/list")).result.tools.find((t: { name: string }) => t.name === "get_item");
     expect(getItem.inputSchema).toMatchObject({ required: ["id"], properties: { id: { type: "string" } } });
     expect(getItem.annotations.readOnlyHint).toBe(true);
@@ -148,13 +153,24 @@ describe("vault tools over MCP", () => {
     expect(ok.result.structuredContent).toMatchObject({ status: 200, path: "/items/7", auth: "Basic ***" });
   });
 
-  it("runs hidden tools through run_vault_tool and reports problems", async () => {
-    const res = await call("run_vault_tool", { name: "hidden_item", arguments: { id: "9" } });
-    expect(res.result.isError).toBe(false);
+  it("runs hidden tools over REST and reports problems", async () => {
+    const runRes = await fetch(`${base}/v1/tools/hidden_item`, {
+      method: "POST",
+      headers: auth(),
+      body: JSON.stringify({ id: "9" }),
+    });
+    expect(runRes.status).toBe(200);
+    const runBody = (await runRes.json()) as { ok: boolean; result: unknown };
+    expect(runBody.ok).toBe(true);
     expect(lastPath).toBe("/items/9");
+
     const direct = await call("hidden_item", { id: "9" });
     expect(direct.result.structuredContent.error.code).toBe("unknown_tool");
-    const status = (await call("list_vault_tools", {})).result.structuredContent;
+
+    const statusRes = await fetch(`${base}/v1/tools`, { headers: auth() });
+    expect(statusRes.status).toBe(200);
+    const status = (await statusRes.json()) as Record<string, any>;
+    expect(status.ok).toBe(true);
     const broken = status.tools.find((t: { name: string }) => t.name === "broken");
     expect(broken.status).toBe("invalid");
     expect(broken.problems.join(" ")).toMatch(/description/);
@@ -171,7 +187,7 @@ describe("vault tools over MCP", () => {
     expect(prompt.result.messages[0].content.text).toMatch(/^# Set up the MCP environment/);
     const removed = await rpc("prompts/get", { name: "add_vault_tool", arguments: { request: "get an item" } });
     expect(removed.error?.message).toMatch(/Unknown prompt/);
-    const rest = await fetch(`${base}/v1/tools/guide`, { headers: auth() });
+    const rest = await fetch(`${base}/v1/tools/guide?topic=security`, { headers: auth() });
     expect(await rest.text()).toContain("ask the user before writing the plan");
   });
 
@@ -228,22 +244,22 @@ describe("search_vault_tools and vault_tool_hint", () => {
   beforeAll(() => registry.refresh());
 
   it("finds the tool for an endpoint, hidden ones too, with how to run it", async () => {
-    const res = await call("search_vault_tools", { method: "GET", url: "https://example.com/items/42" });
-    const results = res.result.structuredContent.results as Array<{ name: string; endpoint: string; run: { call: string; arguments: unknown } }>;
+    const res = await toolsService.callMcp("search_vault_tools", { method: "GET", url: "https://example.com/items/42" }, fullContext);
+    const results = (res.value as any).results as Array<{ name: string; endpoint: string; run: { call: string; arguments: unknown } }>;
     expect(results.map((r) => r.name)).toEqual(expect.arrayContaining(["get_item", "hidden_item"]));
     const visible = results.find((r) => r.name === "get_item")!;
     expect(visible.endpoint).toBe("GET /items/{id}");
     expect(visible.run).toEqual({ call: "get_item", arguments: { id: "42" } });
     const hidden = results.find((r) => r.name === "hidden_item")!;
-    expect(hidden.run).toEqual({ call: "run_vault_tool", arguments: { name: "hidden_item", arguments: { id: "42" } } });
+    expect(hidden.run).toEqual({ call: "tools_run", arguments: { id: "hidden_item", args: { id: "42" } } });
   });
 
   it("finds tools by keywords and says when nothing matches", async () => {
-    const byWords = await call("search_vault_tools", { query: "digest" });
-    expect(byWords.result.structuredContent.results[0].name).toBe("item_digest");
-    const none = await call("search_vault_tools", { method: "POST", url: "/nothing/here" });
-    expect(none.result.structuredContent.results).toEqual([]);
-    expect(none.result.structuredContent.note).toMatch(/http_request/);
+    const byWords = await toolsService.callMcp("search_vault_tools", { query: "digest" }, fullContext);
+    expect((byWords.value as any).results[0].name).toBe("item_digest");
+    const none = await toolsService.callMcp("search_vault_tools", { method: "POST", url: "/nothing/here" }, fullContext);
+    expect((none.value as any).results).toEqual([]);
+    expect((none.value as any).note).toMatch(/http_request/);
   });
 
   it("runs http_request as asked and points to the vault tool that covers it", async () => {

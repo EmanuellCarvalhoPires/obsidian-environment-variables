@@ -442,3 +442,26 @@ function isCompatibleApi(value: unknown): value is AIEcosystemAPI {
     typeof (value as AIEcosystemAPI).registerModule === "function"
   );
 }
+
+// ---------- `mcp-packages` service (owned by AI Ecosystem) ----------
+
+export const MCP_PACKAGES_SERVICE = "mcp-packages";
+
+/** A downloaded MCP package, as AI Ecosystem lists it. */
+export interface InstalledMcpPackage {
+  id: string;
+  name: string;
+  app: string;
+  tag: string;
+  logo: string;
+  serviceTag?: string;
+  groupId?: string;
+  toolCount: number;
+  dbPath: string;
+}
+
+export interface McpPackagesService {
+  list(): InstalledMcpPackage[];
+  /** Returns an unsubscribe function. */
+  onChange(listener: () => void): () => void;
+}

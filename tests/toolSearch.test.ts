@@ -51,7 +51,7 @@ describe("tool search", () => {
     expect(out.results.map((r) => r.name)).toEqual(["jira_get_issue"]);
     const words = searchTools(tools, index, { query: "issue search" });
     expect(words.results.map((r) => r.name)).toEqual(["jira_search", "jira_get_issue"]);
-    expect((words.results[0] as SearchResult).run).toEqual({ call: "run_vault_tool", arguments: { name: "jira_search", arguments: {} } });
+    expect((words.results[0] as SearchResult).run).toEqual({ call: "tools_run", arguments: { id: "jira_search", args: {} } });
   });
 
   it("filters by mcp package name, app, or key", () => {

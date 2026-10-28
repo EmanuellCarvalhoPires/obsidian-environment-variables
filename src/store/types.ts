@@ -43,7 +43,14 @@ export interface SecretRecord {
 }
 
 /** Everything about a secret except its value. Safe to show to AI clients. */
-export type SecretMetadata = Omit<SecretRecord, "value" | "id">;
+export type SecretMetadata = Omit<SecretRecord, "value" | "id" | "username">;
+
+export interface CompactSecretMetadata {
+  name: string;
+  type: SecretType;
+  hosts: string[];
+  fullAccess: boolean;
+}
 
 export type ValueKind = "texto" | "numero" | "url" | "email" | "json" | "senha";
 
@@ -111,7 +118,16 @@ export function valueMatchesKind(kind: ValueKind, text: string): boolean {
 
 export const SECRET_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
+export function toCompactMetadata(secret: SecretRecord): CompactSecretMetadata {
+  return {
+    name: secret.name,
+    type: secret.type,
+    hosts: [...(secret.allowedHosts ?? [])],
+    fullAccess: secret.fullAccess ?? false,
+  };
+}
+
 export function toMetadata(secret: SecretRecord): SecretMetadata {
-  const { value: _value, id: _id, ...rest } = secret;
+  const { value: _value, id: _id, username: _username, ...rest } = secret;
   return rest;
 }

@@ -1,8 +1,27 @@
 // NoteSource backed by Obsidian's metadata cache: tags and frontmatter come from the cache,
 // links resolve like [[wikilinks]] do, and folders never matter.
 
-import { App, getAllTags, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
 import { hasTag, linkTarget, normalizeTag, NoteSource, VaultNote } from "./types";
+
+function extractFrontmatterTags(fm: Record<string, unknown> | undefined): string[] {
+  if (!fm) return [];
+  const raw: string[] = [];
+  for (const key of ["tags", "tag"]) {
+    const val = fm[key];
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        if (typeof item === "string") raw.push(item);
+        else if (item !== null && item !== undefined) raw.push(String(item));
+      }
+    } else if (typeof val === "string") {
+      for (const part of val.split(/[\s,]+/)) {
+        if (part) raw.push(part);
+      }
+    }
+  }
+  return [...new Set(raw.map((t) => normalizeTag(t)).filter(Boolean))];
+}
 
 export class ObsidianNoteSource implements NoteSource {
   constructor(private readonly app: App) {}
@@ -42,9 +61,9 @@ export class ObsidianNoteSource implements NoteSource {
 
   private toNote(file: TFile): VaultNote {
     const cache = this.app.metadataCache.getFileCache(file);
-    const tags = [...new Set((cache ? (getAllTags(cache) ?? []) : []).map(normalizeTag))];
     const frontmatter = { ...((cache?.frontmatter ?? {}) as Record<string, unknown>) };
     delete frontmatter.position;
+    const tags = extractFrontmatterTags(frontmatter);
     return { path: file.path, name: file.basename, frontmatter, tags };
   }
 }

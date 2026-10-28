@@ -1,4 +1,4 @@
-// Index metadata (categoria, tags, resumo, efeito, aprovacao) of the 8 native tools, read by AI Ecosystem's
+// Index metadata (categoria, tags, resumo, efeito, aprovacao) of native tools, read by AI Ecosystem's
 // tools_find / tools_describe / tools_run. Kept apart from the tool definitions so the MCP text stays untouched.
 
 import { HubTool } from "../ecosystem/moduleConnector";
@@ -29,38 +29,6 @@ export const NATIVE_TOOL_METADATA: Record<string, HubToolMetadata> = {
     efeito: "leitura",
     aprovacao: "dispensada",
     exemplo: {},
-  },
-  list_vault_tools: {
-    categoria: "Tools do cofre",
-    tags: ["tool", "lista", "status", "mcp"],
-    resumo: "Lista as tools do cofre com status, parâmetros e problemas",
-    efeito: "leitura",
-    aprovacao: "dispensada",
-    exemplo: { mcp: "Jira Cloud", query: "changelog" },
-  },
-  search_vault_tools: {
-    categoria: "Tools do cofre",
-    tags: ["tool", "busca", "endpoint", "mcp", "jira"],
-    resumo: "Acha tools do cofre por pacote, nome, palavras-chave ou endpoint",
-    efeito: "leitura",
-    aprovacao: "dispensada",
-    exemplo: { query: "jira changelog" },
-  },
-  list_tools: {
-    categoria: "Tools do cofre",
-    tags: ["tool", "busca", "lista", "mcp"],
-    resumo: "Busca e lista tools por pacote, nome ou palavras-chave",
-    efeito: "leitura",
-    aprovacao: "dispensada",
-    exemplo: { mcp: "Jira Cloud" },
-  },
-  run_vault_tool: {
-    categoria: "Tools do cofre",
-    tags: ["tool", "executar", "api", "mcp"],
-    resumo: "Executa uma tool do cofre pelo nome, com segredos resolvidos no Obsidian",
-    efeito: "externo",
-    aprovacao: "Posso executar a tool {name}?",
-    exemplo: { name: "jira_get_issue", arguments: { instancia: "Acme", issueIdOrKey: "ATL-1" } },
   },
   env_criar_secret: {
     categoria: "Segredos",

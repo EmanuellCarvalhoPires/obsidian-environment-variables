@@ -48,6 +48,15 @@ export function exampleOf(entry: Pick<ToolEntry, "params">): Record<string, unkn
   return out;
 }
 
+/** Every request tool accepts max_chars (see takeMaxChars), so the index advertises it next to the tool's own parameters. */
+export function withMaxChars(schema: Record<string, unknown>): Record<string, unknown> {
+  const properties = { ...((schema.properties as Record<string, unknown> | undefined) ?? {}) };
+  if (!("max_chars" in properties)) {
+    properties.max_chars = { type: "integer", description: "Cut the response after this many characters (1 to 1000000); the answer then has truncated and total_chars." };
+  }
+  return { ...schema, properties };
+}
+
 export function toApiIndexEntry(entry: ToolEntry, endpoint?: ApiEndpoint): ToolIndexEntry {
   const efeito = effectOf(entry, endpoint);
   const categoria = entry.mcpName?.trim() || "Vault";
@@ -57,7 +66,7 @@ export function toApiIndexEntry(entry: ToolEntry, endpoint?: ApiEndpoint): ToolI
     name: entry.name,
     title: entry.title,
     description: endpoint ? `${endpoint.method.toUpperCase()} ${endpoint.path}. ${description}` : description,
-    inputSchema: inputSchema(entry.params),
+    inputSchema: withMaxChars(inputSchema(entry.params)),
     kind: "api",
     categoria,
     tags: [...new Set(tags)],
@@ -66,6 +75,11 @@ export function toApiIndexEntry(entry: ToolEntry, endpoint?: ApiEndpoint): ToolI
     exposicao: "indice",
     exemplo: exampleOf(entry),
   };
+}
+
+/** Drops the tools of a package database (notePath ending in .db): AI Ecosystem indexes those in its own tools.db. */
+export function withoutPackageDbTools(entries: ToolEntry[]): ToolEntry[] {
+  return entries.filter((entry) => !entry.notePath.toLowerCase().endsWith(".db"));
 }
 
 /** One entry per ready request tool. `endpointOf` gives the method and path (it may be async: notes are read). */

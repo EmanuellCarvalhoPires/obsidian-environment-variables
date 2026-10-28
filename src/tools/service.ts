@@ -5,14 +5,18 @@ import { AuditLog } from "../audit/auditLog";
 import { Broker, BrokerSuccess } from "../secrets/broker";
 import { RequestInput } from "../secrets/prepare";
 import { ClientContext } from "../server/clients";
-import { buildApiIndexEntries } from "./apiIndex";
+import { buildApiIndexEntries, withoutPackageDbTools } from "./apiIndex";
 import { inputSchema, validateArgs } from "./definition";
-import { ToolRegistry } from "./registry";
+import { resolveServiceChoice, ToolRegistry } from "./registry";
 import { parseRequestBlock, resolveRequest, servicePlaceholderNames } from "./requestNote";
 import { ScriptRunner } from "./scriptRunner";
 import { compileEndpoint, EndpointPattern, endpointOf, howToRun, matchEndpoint, mcpOf, normalizeMcpKey, RunHint, searchTools, summarizeMcps } from "./toolSearch";
 import { McpDbManager } from "./mcpDb";
+import { convertAdfFields } from "./adfText";
+import { paginate } from "./pagination";
+import { limitResponse, projectFields, takeMaxChars } from "./responseShape";
 import { NoteSource, ToolEntry, ToolError, VaultNote } from "./types";
+export { computeSyncHash } from "./syncHash";
 
 export interface ToolsSettings {
   toolsEnabled: boolean;
@@ -31,7 +35,7 @@ export interface ToolsDeps {
   audit: AuditLog;
   settings: () => ToolsSettings;
   /** The authoring guide for AI agents, in the user's language. */
-  guide: () => string;
+  guide: (topic?: string) => string;
   dbManager?: McpDbManager;
 }
 
@@ -57,101 +61,39 @@ export const META_TOOLS: McpToolDefinition[] = [
     description:
       "Read this before creating, changing or explaining vault tools (MCP tools defined by notes in the user's Obsidian vault, e.g. a set of tools for Google Drive or Jira). " +
       "Explains the note formats, the rules, and the mandatory workflow: ask the user for missing information, then write an implementation plan and wait for approval.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  },
-  {
-    name: "list_vault_tools",
-    title: "List vault tools and their status",
-    description:
-      "Lists the tool notes and package tools found in the vault with their status (ready, scripts-disabled, invalid), parameters and problems to fix, plus the saved request notes. Use it to check your work after creating or editing tool notes. " +
-      "Without filters the output is very large: pass mcp, name, query or status to narrow it down. To find a tool for a task, use search_vault_tools.",
     inputSchema: {
       type: "object",
       properties: {
-        mcp: { type: "string", description: "Only the tools of this MCP package, e.g. \"Jira\", \"Jira Service Management\", \"Bitbucket\"." },
-        name: { type: "string", description: "Only the tool with this exact name." },
-        query: { type: "string", description: "Only tools whose name, title or description contain every word." },
-        status: { type: "string", enum: ["ready", "scripts-disabled", "invalid"], description: "Only tools with this status." },
+        topic: {
+          type: "string",
+          description: "Topic slug to read a single section of the guide (e.g. 'security', 'note-formats'). Omit to get the index.",
+        },
       },
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  },
-  {
-    name: "search_vault_tools",
-    title: "Search vault tools",
-    description:
-      "Finds vault tools for a task. Most tools (Jira, Jira Software, Jira Service Management, Assets, Confluence, Bitbucket, Automation...) are NOT in your tool list: find them here and run them with run_vault_tool. " +
-      "Filters, combinable: mcp (package, e.g. \"Jira\", \"Jira Service Management\", \"Bitbucket\", \"jsm\"), name (exact tool name, e.g. \"jira_get_issue\"), query (keywords, e.g. \"issue changelog\"), method + url (the endpoint you would send with http_request). " +
-      "Only mcp lists that MCP's tools one line each (paged with offset); no arguments returns the available MCPs. Results include parameters and how to run each tool (run). Call it before http_request.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mcp: { type: "string", description: "MCP package: \"Jira\", \"Jira Software\", \"Jira Service Management\", \"JSM Assets\", \"Confluence\", \"Bitbucket\", \"Automation\"... Call without arguments to see them all." },
-        name: { type: "string", description: "Exact tool name, e.g. \"jira_get_issue\". Falls back to tools whose name contains it." },
-        query: { type: "string", description: "Keywords, e.g. \"jira issue changelog\"." },
-        method: { type: "string", description: "HTTP method of the endpoint, e.g. GET." },
-        url: { type: "string", description: "URL or path of the endpoint, e.g. https://acme.atlassian.net/rest/api/3/issue/ABC-1/changelog." },
-        limit: { type: "number", description: "Maximum results (default 10, max 50; listing a whole MCP: default 50, max 200)." },
-        offset: { type: "number", description: "Results to skip, for paging." },
-      },
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  },
-  {
-    name: "list_tools",
-    title: "Search and list tools",
-    description:
-      "Finds and lists tools. Filters, combinable: mcp (package, e.g. \"Jira\", \"Jira Service Management\", \"Bitbucket\"), name (exact tool name, e.g. \"jira_get_issue\"), query (keywords). Without arguments, returns the available MCP packages.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mcp: { type: "string", description: "MCP package: \"Jira\", \"Jira Software\", \"Jira Service Management\", \"JSM Assets\", \"Confluence\", \"Bitbucket\", \"Automation\"... Call without arguments to see them all." },
-        name: { type: "string", description: "Exact tool name, e.g. \"jira_get_issue\". Falls back to tools whose name contains it." },
-        query: { type: "string", description: "Keywords, e.g. \"jira issue changelog\"." },
-        method: { type: "string", description: "HTTP method of the endpoint, e.g. GET." },
-        url: { type: "string", description: "URL or path of the endpoint, e.g. https://acme.atlassian.net/rest/api/3/issue/ABC-1/changelog." },
-        limit: { type: "number", description: "Maximum results (default 10, max 50; listing a whole MCP: default 50, max 200)." },
-        offset: { type: "number", description: "Results to skip, for paging." },
-      },
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  },
-  {
-    name: "run_vault_tool",
-    title: "Run a vault tool by name",
-    description:
-      "Runs a vault tool by name, including tools with expose: false and tools created after your tool list was loaded. Ask the user before running a tool that writes data.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Tool name, as in list_vault_tools." },
-        arguments: { type: "object", description: "Arguments for the tool." },
-      },
-      required: ["name"],
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   },
 ];
 
 const META_NAMES = new Set(META_TOOLS.map((t) => t.name));
 const MAX_QUERY_RESULTS = 500;
+const MAX_SCRIPT_HTTP_CALLS = 200;
 
 /** What http_request adds to its result when a vault tool covers the endpoint it just called. */
 export interface VaultToolHint {
   tool: string;
-  endpoint: string;
-  run: RunHint;
-  message: string;
+  endpoint?: string;
+  run?: RunHint;
+  message?: string;
 }
+
+export type HintResult = VaultToolHint | (Record<string, unknown> & { via_tool: string });
 
 export class ToolsService {
   /** The endpoints of the request tools, rebuilt after any tool note changes. */
   private endpoints: Promise<EndpointPattern[]> | null = null;
+  /** Tracks which tools have already been hinted to each client ID. */
+  private clientSeenTools = new Map<string, Set<string>>();
 
   constructor(private readonly deps: ToolsDeps) {
     deps.registry.onChange(() => (this.endpoints = null));
@@ -193,12 +135,13 @@ export class ToolsService {
     try {
       await this.ready();
       if (name === "get_tool_authoring_guide") {
-        return { text: this.deps.guide(), isError: false };
+        const topic = typeof args.topic === "string" ? args.topic.trim() : undefined;
+        return { text: this.deps.guide(topic), isError: false };
       }
       if (name === "list_vault_tools") {
         return { value: this.status(args), isError: false };
       }
-      if (name === "search_vault_tools" || name === "list_tools") {
+      if (name === "search_vault_tools") {
         return { value: searchTools(this.deps.registry.list(), await this.endpointIndex(), args), isError: false };
       }
       if (name === "run_vault_tool") {
@@ -213,6 +156,23 @@ export class ToolsService {
 
   /** For list_vault_tools and GET /v1/tools. Never contains secret values. Filters: mcp, name, query, status. */
   status(filters: Record<string, unknown> = {}): Record<string, unknown> {
+    let limit = 50;
+    if (filters.limit !== undefined) {
+      const rawLimit = typeof filters.limit === "string" && /^\d+$/.test(filters.limit.trim()) ? Number(filters.limit) : filters.limit;
+      if (typeof rawLimit !== "number" || !Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 200) {
+        throw new ToolError("invalid_argument", 'Argument "limit" must be an integer between 1 and 200.');
+      }
+      limit = rawLimit;
+    }
+
+    let offset = 0;
+    if (filters.offset !== undefined) {
+      const rawOffset = typeof filters.offset === "string" && /^\d+$/.test(filters.offset.trim()) ? Number(filters.offset) : filters.offset;
+      if (typeof rawOffset !== "number" || !Number.isInteger(rawOffset) || rawOffset < 0) {
+        throw new ToolError("invalid_argument", 'Argument "offset" must be an integer greater than or equal to 0.');
+      }
+      offset = rawOffset;
+    }
     const s = this.deps.settings();
     const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
     const mcp = str(filters.mcp);
@@ -229,13 +189,18 @@ export class ToolsService {
     if (name) entries = entries.filter((e) => e.name.toLowerCase() === name);
     if (words.length) entries = entries.filter((e) => words.every((w) => `${e.name} ${e.title} ${e.description}`.toLowerCase().includes(w)));
     if (status) entries = entries.filter((e) => e.status === status);
+    const total = entries.length;
+    const paged = entries.slice(offset, offset + limit);
+    const nextOffset = offset + limit < total ? offset + limit : null;
     return {
       enabled: s.toolsEnabled,
       scriptsEnabled: s.scriptsEnabled,
       toolTag: s.toolTag,
       requestTag: s.requestTag,
       ...(filtered ? {} : { mcps: summarizeMcps(this.deps.registry.list()) }),
-      tools: entries.map((e) => ({
+      total,
+      next_offset: nextOffset,
+      tools: paged.map((e) => ({
         name: e.name,
         title: e.title,
         kind: e.kind,
@@ -260,6 +225,11 @@ export class ToolsService {
     };
   }
 
+  /** Runs a tool directly by name, used by POST /v1/tools/:name. */
+  async runTool(name: string, rawArgs: unknown, client: ClientContext): Promise<unknown> {
+    return this.run(name, rawArgs, client);
+  }
+
   /** Runs a tool. Throws ToolError with a message the AI can act on. */
   async run(name: string, rawArgs: unknown, client: ClientContext): Promise<unknown> {
     if (!this.enabled()) throw new ToolError("tools_disabled", "Vault tools are turned off. The user can turn them on in Obsidian: Settings > Environment Keys > Vault tools.");
@@ -281,7 +251,11 @@ export class ToolsService {
   private async execute(entry: ToolEntry, rawArgs: unknown, client: ClientContext): Promise<unknown> {
     if (entry.status === "invalid") throw new ToolError("invalid_tool", `Tool "${entry.name}" in ${entry.notePath} has problems: ${entry.problems.join(" ")}`);
     if (entry.status === "scripts-disabled") throw new ToolError("scripts_disabled", "Script tools are turned off. The user can turn them on in Obsidian: Settings > Environment Keys > Vault tools.");
-    const checked = validateArgs(entry.params, rawArgs);
+    let toolArgs = rawArgs;
+    let maxChars: number | undefined;
+    if (entry.kind === "request") ({ args: toolArgs, maxChars } = takeMaxChars(rawArgs));
+    toolArgs = this.withResolvedInstance(entry, toolArgs);
+    const checked = validateArgs(entry.params, toolArgs);
     if (!checked.ok) throw new ToolError("invalid_argument", checked.message);
 
     // Generic tools get the service note of the instance chosen in the call; others their fixed one.
@@ -297,14 +271,49 @@ export class ToolsService {
       } else {
         note = this.resolveNote(entry.request!, entry.notePath, "Request note");
       }
-      const res = await this.runRequestNote(note, checked.args, service, entry.notePath, client, body);
-      return compact(res);
+      let res: ToolHttpResponse;
+      if (checked.args.page_limit !== undefined) {
+        const pageLimit = checked.args.page_limit as number;
+        const maxBytes = this.deps.settings().maxResponseMB * 1024 * 1024;
+        res = await paginate(
+          async (cursor) => {
+            const pageArgs = { ...checked.args };
+            if (cursor.startAt !== undefined) {
+              pageArgs.startAt = cursor.startAt;
+            }
+            if (cursor.nextPageToken !== undefined) {
+              pageArgs.nextPageToken = cursor.nextPageToken;
+            }
+            return this.runRequestNote(note, pageArgs, service, entry.notePath, client, body);
+          },
+          pageLimit,
+          { maxBytes },
+        );
+      } else {
+        res = await this.runRequestNote(note, checked.args, service, entry.notePath, client, body);
+      }
+
+      if (checked.args.adf === "text" && res.json !== undefined) {
+        res.json = convertAdfFields(res.json);
+      }
+
+      const responseFields =
+        entry.responseFields ??
+        (typeof this.deps.dbManager?.getResponseFieldsForTool === "function"
+          ? this.deps.dbManager.getResponseFieldsForTool(entry.name)
+          : undefined);
+      if (responseFields && responseFields.length > 0 && res.json !== undefined) {
+        res.json = projectFields(res.json, responseFields);
+      }
+      return compact(maxChars !== undefined ? limitResponse(res, maxChars) : res);
     }
 
     // kind: script. Permission to run it is asked by the AI client, like for any other MCP tool.
     const tool = entry;
     const s = this.deps.settings();
     const serviceNote = service ? this.deps.source.resolve(service, tool.notePath) : undefined;
+    const extraRedact = serviceNote ? servicePlaceholderNames(serviceNote.frontmatter) : [];
+    const executionState = { httpCalls: 0 };
     return this.deps.runner.run({
       code: tool.code!,
       args: checked.args,
@@ -312,8 +321,31 @@ export class ToolsService {
       service: serviceNote ? summary(serviceNote) : null,
       timeoutMs: s.scriptTimeoutSeconds * 1000,
       maxOutputBytes: s.maxResponseMB * 1024 * 1024,
-      bridge: (method, params) => this.bridge(method, params, tool, client, service),
+      bridge: (method, params) => this.bridge(method, params, tool, client, service, executionState),
+      onLog: (line: string) => {
+        const safeLine = typeof this.deps.broker.redact === "function" ? this.deps.broker.redact(line, extraRedact) : line;
+        this.deps.audit.add({
+          client: client.name,
+          action: "tool",
+          tool: tool.name,
+          target: tool.notePath,
+          secrets: [],
+          outcome: "ok",
+          detail: safeLine,
+        });
+        console.debug(safeLine);
+      },
     });
+  }
+
+  /** Replaces the instance the AI typed ("CSP Tech") by the id of the note it means ("Jira Access - CSP Tech"). */
+  private withResolvedInstance(entry: ToolEntry, rawArgs: unknown): unknown {
+    const param = entry.serviceParam;
+    if (!param || !entry.serviceChoices || typeof rawArgs !== "object" || rawArgs === null || Array.isArray(rawArgs)) return rawArgs;
+    const typed = (rawArgs as Record<string, unknown>)[param];
+    if (typeof typed !== "string") return rawArgs;
+    const id = resolveServiceChoice(entry.serviceChoices, typed);
+    return id === undefined ? rawArgs : { ...(rawArgs as Record<string, unknown>), [param]: id };
   }
 
   /** Path or link of the service note for this call: the chosen instance, the fixed service, or none. */
@@ -329,7 +361,7 @@ export class ToolsService {
   }
 
   /** The ctx API of scripts. Every request goes through the broker as the calling client. */
-  private async bridge(method: string, params: unknown, tool: ToolEntry, client: ClientContext, defaultService?: string): Promise<unknown> {
+  private async bridge(method: string, params: unknown, tool: ToolEntry, client: ClientContext, defaultService?: string, executionState?: { httpCalls: number }): Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
     switch (method) {
       case "notes.get": {
@@ -359,6 +391,12 @@ export class ToolsService {
         return this.runRequestNote(note, args as Record<string, unknown>, service, tool.notePath, client);
       }
       case "http": {
+        if (executionState) {
+          executionState.httpCalls++;
+          if (executionState.httpCalls > MAX_SCRIPT_HTTP_CALLS) {
+            throw new ToolError("limit_reached", `limit_reached: the script exceeded the limit of ${MAX_SCRIPT_HTTP_CALLS} ctx.http calls.`);
+          }
+        }
         const req = p as { method?: unknown; url?: unknown; headers?: unknown; body?: unknown };
         const headers = { ...((req.headers ?? {}) as Record<string, string>) };
         let body = req.body;
@@ -396,13 +434,69 @@ export class ToolsService {
    * For http_request: the vault tool that covers this method + URL, if any, so the agent
    * uses it next time. Never fails the request.
    */
-  async hintFor(method: string | undefined, url: string): Promise<VaultToolHint | undefined> {
+  async hintFor(method: string | undefined, url: string, client?: ClientContext): Promise<HintResult | undefined> {
     if (!this.enabled() || !url) return undefined;
     try {
       await this.ready();
-      const best = matchEndpoint(await this.endpointIndex(), method, url)[0];
-      if (!best) return undefined;
+      const matches = matchEndpoint(await this.endpointIndex(), method, url);
+      if (matches.length === 0) return undefined;
+
+      const isGet = (typeof method === "string" && method ? method : "GET").toUpperCase() === "GET";
+
+      if (isGet && matches.length === 1 && client) {
+        const match = matches[0];
+        const tool = match.pattern.tool;
+        const args: Record<string, unknown> = { ...match.args };
+
+        try {
+          const parsedUrl = new URL(url, "https://x.invalid");
+          for (const [k, v] of parsedUrl.searchParams.entries()) {
+            if (!(k in args)) args[k] = v;
+          }
+        } catch {
+          // Ignore invalid URL
+        }
+
+        let canFillRequired = true;
+        for (const [paramName, spec] of Object.entries(tool.params)) {
+          if (spec.required) {
+            if (args[paramName] === undefined || args[paramName] === "") {
+              canFillRequired = false;
+              break;
+            }
+          }
+        }
+
+        if (canFillRequired) {
+          try {
+            const runResult = await this.run(tool.name, args, client);
+            const resObj =
+              runResult && typeof runResult === "object" && !Array.isArray(runResult)
+                ? (runResult as Record<string, unknown>)
+                : { result: runResult };
+            return {
+              ...resObj,
+              via_tool: tool.name,
+            };
+          } catch {
+            // Fall back to returning the hint
+          }
+        }
+      }
+
+      const best = matches[0];
       const tool = best.pattern.tool;
+      if (client?.id) {
+        let seen = this.clientSeenTools.get(client.id);
+        if (!seen) {
+          seen = new Set<string>();
+          this.clientSeenTools.set(client.id, seen);
+        }
+        if (seen.has(tool.name)) {
+          return { tool: tool.name };
+        }
+        seen.add(tool.name);
+      }
       return {
         tool: tool.name,
         endpoint: `${best.pattern.method} ${best.pattern.path}`,
@@ -421,7 +515,7 @@ export class ToolsService {
   async apiIndexEntries(): Promise<ToolIndexEntry[]> {
     if (!this.enabled()) return [];
     await this.ready();
-    return buildApiIndexEntries(this.deps.registry.list(), async (entry) => {
+    return buildApiIndexEntries(withoutPackageDbTools(this.deps.registry.list()), async (entry) => {
       const row = this.deps.dbManager?.getRequestForTool(entry.name);
       if (row) return { method: row.method, path: row.path };
       if (!entry.request) return undefined;
@@ -438,11 +532,19 @@ export class ToolsService {
   private async buildEndpointIndex(): Promise<EndpointPattern[]> {
     const out: EndpointPattern[] = [];
     for (const entry of this.deps.registry.list()) {
-      if (entry.kind !== "request" || entry.status !== "ready" || !entry.request) continue;
-      const note = this.deps.source.resolve(entry.request, entry.notePath);
-      if (!note) continue;
-      const endpoint = endpointOf(await this.deps.source.read(note), note.frontmatter);
-      const pattern = endpoint && compileEndpoint(entry, endpoint.method, endpoint.path);
+      if (entry.kind !== "request" || entry.status !== "ready") continue;
+      let endpoint: { method: string; path: string } | undefined;
+      const row = this.deps.dbManager?.getRequestForTool(entry.name);
+      if (row) {
+        endpoint = { method: row.method, path: row.path };
+      } else if (entry.request) {
+        const note = this.deps.source.resolve(entry.request, entry.notePath);
+        if (note) {
+          endpoint = endpointOf(await this.deps.source.read(note), note.frontmatter);
+        }
+      }
+      if (!endpoint) continue;
+      const pattern = compileEndpoint(entry, endpoint.method, endpoint.path);
       if (pattern) out.push(pattern);
     }
     return out;

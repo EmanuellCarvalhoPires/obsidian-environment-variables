@@ -155,7 +155,7 @@ export function matchEndpoint(index: EndpointPattern[], method: unknown, url: st
 }
 
 export function howToRun(tool: ToolEntry, args: Record<string, unknown> = {}): RunHint {
-  return tool.expose ? { call: tool.name, arguments: args } : { call: "run_vault_tool", arguments: { name: tool.name, arguments: args } };
+  return tool.expose ? { call: tool.name, arguments: args } : { call: "tools_run", arguments: { id: tool.name, args } };
 }
 
 /** Lowercase, without accents and with "-", "_" and repeated spaces turned into one space. */
@@ -244,7 +244,7 @@ export function searchTools(tools: ToolEntry[], index: EndpointPattern[], input:
         ? `No MCP matched "${mcp}". Call search_vault_tools without arguments to see the MCPs.`
         : offset + page.length < sorted.length
           ? `Showing ${offset + 1}-${offset + page.length} of ${sorted.length}. Pass offset to see more, or add query to narrow down. Use name to get a tool's parameters.`
-          : "Use name to get a tool's parameters, then run it with run_vault_tool.",
+          : "Use name to get a tool's parameters, then run it with tools_run.",
     };
   }
 

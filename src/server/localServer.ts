@@ -1,7 +1,9 @@
 import * as http from "http";
 import { clearInterval, setInterval } from "timers";
 import { Broker } from "../secrets/broker";
+import type { ResponseWriter } from "../tools/savedResponses";
 import type { ToolsService } from "../tools/service";
+import { ToolError } from "../tools/types";
 import { ClientContext } from "./clients";
 import { handleMcpMessage } from "./mcp";
 
@@ -20,9 +22,11 @@ export interface LocalServerOptions {
   /** Vault tools. Optional so the server also works (and is tested) without them. */
   tools?: ToolsService;
   /** The AI agent guide, with an optional user request appended. */
-  guide?: (request?: string) => string;
+  guide?: (request?: string, topic?: string) => string;
   /** Which vault this server belongs to, so another vault can tell whose server holds a port. */
   vault?: { id: string; name: string };
+  /** Writer for saved HTTP responses (e.g. app.vault.adapter in production). */
+  responseWriter?: ResponseWriter;
 }
 
 /** The port is taken, by another vault's server or by another program. */
@@ -168,17 +172,32 @@ export class LocalServer {
     }
     if (url.pathname === "/v1/tools/guide" && req.method === "GET") {
       if (!tools?.enabled() || !this.options.guide) return sendJson(res, 404, error("tools_disabled", "Vault tools are turned off in the plugin settings."));
-      res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(this.options.guide(url.searchParams.get("request") ?? undefined));
-      return;
+      const topic = url.searchParams.get("topic") ?? undefined;
+      const request = url.searchParams.get("request") ?? undefined;
+      try {
+        const text = this.options.guide(request, topic);
+        res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(text);
+        return;
+      } catch (err) {
+        const code = err instanceof ToolError ? err.code : "invalid_argument";
+        const message = err instanceof Error ? err.message : String(err);
+        return sendJson(res, 400, error(code, message));
+      }
     }
     const run = /^\/v1\/tools\/([a-z][a-z0-9_]{0,63})$/.exec(url.pathname);
     if (run && req.method === "POST") {
       if (!tools?.enabled()) return sendJson(res, 404, error("tools_disabled", "Vault tools are turned off in the plugin settings."));
       const args = await readJson(req);
       if (args === undefined) return sendJson(res, 400, error("invalid_request", "Body must be a JSON object with the tool arguments."));
-      const out = await tools.callMcp("run_vault_tool", { name: run[1], arguments: args }, client);
-      return sendJson(res, out.isError ? 400 : 200, out.isError ? out.value : { ok: true, result: out.value });
+      try {
+        const result = await tools.runTool(run[1], args, client);
+        return sendJson(res, 200, { ok: true, result });
+      } catch (err) {
+        const code = err instanceof ToolError ? err.code : "internal_error";
+        const message = err instanceof Error ? err.message : String(err);
+        return sendJson(res, 400, error(code, message));
+      }
     }
     if (url.pathname === "/mcp") {
       if (req.method === "GET") {
@@ -192,7 +211,14 @@ export class LocalServer {
       if (req.method !== "POST") return sendJson(res, 405, error("method_not_allowed", "Use POST."), { Allow: "POST" });
       const message = await readJson(req);
       if (message === undefined) return sendJson(res, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
-      const response = await handleMcpMessage(message, { broker, client, version: this.options.version, tools, guide: this.options.guide });
+      const response = await handleMcpMessage(message, {
+        broker,
+        client,
+        version: this.options.version,
+        tools,
+        guide: this.options.guide,
+        responseWriter: this.options.responseWriter,
+      });
       if (response === null) {
         res.writeHead(202);
         res.end();

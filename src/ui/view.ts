@@ -13,7 +13,6 @@ import { McpAppConfig, McpGroupConfig, McpGroupStats, newMcpApp, newMcpGroup } f
 import { ToolEntry } from "../tools/types";
 import { iconLine } from "./dom";
 import { McpAppModal } from "./mcpAppModal";
-import { McpDownloadModal } from "./mcpDownloadModal";
 import { McpGroupModal } from "./mcpGroupModal";
 import { ToolRunModal } from "./toolModals";
 import { ChangePasswordModal, ForgotPasswordModal, ShowRecoveryKeyModal } from "./recoveryModals";
@@ -43,9 +42,10 @@ export class EnvironmentVariablesView extends ItemView {
   private serverHeaderEl!: HTMLElement;
   private secretsEl!: HTMLElement;
   private valuesEl!: HTMLElement;
-  private mcpEl!: HTMLElement;
-  private mcpGroupsEl!: HTMLElement;
-  private logEl!: HTMLElement;
+  private howToEl!: HTMLElement;
+  private mcpEl?: HTMLElement;
+  private mcpGroupsEl?: HTMLElement;
+  private logEl?: HTMLElement;
   private connecting: IntegrationId | null = null;
   private detected = new Map<IntegrationId, boolean>();
 
@@ -87,8 +87,11 @@ export class EnvironmentVariablesView extends ItemView {
       }),
       this.plugin.onServerChange(() => {
         this.debounce(() => {
-          this.updateServerHeader();
-          this.updateMcpGroups();
+          if (this.plugin.store.isUnlocked) {
+            this.render();
+          } else {
+            void this.refresh();
+          }
         });
       }),
       this.plugin.registry.onChange(() => {
@@ -237,16 +240,27 @@ export class EnvironmentVariablesView extends ItemView {
     this.serverHeaderEl = root.createDiv({ cls: "ev-section-server" });
     this.secretsEl = root.createDiv({ cls: "ev-section-secrets" });
     this.valuesEl = root.createDiv({ cls: "ev-section-values" });
-    this.mcpEl = root.createDiv({ cls: "ev-section-mcp-wrap" });
-    this.mcpGroupsEl = root.createDiv({ cls: "ev-section-mcpgroups-wrap" });
-    this.logEl = root.createDiv({ cls: "ev-section-log-wrap" });
+    this.howToEl = root.createDiv({ cls: "ev-section-howto-wrap" });
+
+    if (!this.plugin.isEcosystemConnected) {
+      this.mcpEl = root.createDiv({ cls: "ev-section-mcp-wrap" });
+      this.mcpGroupsEl = root.createDiv({ cls: "ev-section-mcpgroups-wrap" });
+      this.logEl = root.createDiv({ cls: "ev-section-log-wrap" });
+    } else {
+      this.mcpEl = undefined;
+      this.mcpGroupsEl = undefined;
+      this.logEl = undefined;
+    }
 
     this.updateServerHeader();
     this.updateSecrets();
     this.updateValues();
-    this.updateMcp();
-    this.updateMcpGroups();
-    this.updateLog();
+    this.updateHowTo();
+    if (!this.plugin.isEcosystemConnected) {
+      this.updateMcp();
+      this.updateMcpGroups();
+      this.updateLog();
+    }
   }
 
   private updateServerHeader(): void {
@@ -265,6 +279,23 @@ export class EnvironmentVariablesView extends ItemView {
     if (!this.valuesEl) return;
     this.valuesEl.empty();
     this.renderValues(this.valuesEl);
+  }
+
+  private updateHowTo(): void {
+    if (!this.howToEl) return;
+    this.howToEl.empty();
+    this.renderHowToSection(this.howToEl);
+  }
+
+  private renderHowToSection(root: HTMLElement): void {
+    const section = root.createDiv({ cls: "ev-section" });
+    lazySection(
+      section,
+      t("view.howto.title"),
+      this.howToOpen,
+      (open) => (this.howToOpen = open),
+      (body) => this.renderHowTo(body),
+    );
   }
 
   private updateMcp(): void {
@@ -442,14 +473,16 @@ export class EnvironmentVariablesView extends ItemView {
     const section = root.createDiv({ cls: "ev-section" });
     sectionHeading(section, t("view.section.mcp"));
 
-    const clients = this.plugin.data.clients;
-    lazySection(
-      section,
-      t("view.clients.title"),
-      this.clientsOpen ?? clients.length === 0,
-      (open) => (this.clientsOpen = open),
-      (body) => this.renderClients(body),
-    );
+    if (!this.plugin.isEcosystemConnected) {
+      const clients = this.plugin.data.clients;
+      lazySection(
+        section,
+        t("view.clients.title"),
+        this.clientsOpen ?? clients.length === 0,
+        (open) => (this.clientsOpen = open),
+        (body) => this.renderClients(body),
+      );
+    }
 
     const settings = this.plugin.data.settings;
     const entries = this.plugin.registry.list();
@@ -460,14 +493,6 @@ export class EnvironmentVariablesView extends ItemView {
       toolsOpen,
       (open) => (this.toolsOpen = open),
       (body) => this.renderTools(body),
-    );
-
-    lazySection(
-      section,
-      t("view.howto.title"),
-      this.howToOpen,
-      (open) => (this.howToOpen = open),
-      (body) => this.renderHowTo(body),
     );
   }
 
@@ -758,7 +783,14 @@ export class EnvironmentVariablesView extends ItemView {
     const heading = sectionHeading(section, t("view.section.mcpGroups"));
     heading.addButton((b) => b.setButtonText(t("view.mcpGroups.addApp")).onClick(() => this.openMcpAppModal(null)));
     heading.addButton((b) =>
-      b.setButtonText(t("view.mcpGroups.download")).onClick(() => new McpDownloadModal(this.app, this.plugin, () => void this.refresh()).open()),
+      b
+        .setButtonText(t("view.mcpGroups.openCatalog"))
+        .setIcon("package-plus")
+        .onClick(() => {
+          // Packages are installed by AI Ecosystem: its catalog command opens the catalog.
+          const commands = (this.app as unknown as { commands: { executeCommandById(id: string): boolean } }).commands;
+          if (!commands.executeCommandById("ai-ecosystem:open-catalog")) new Notice(t("notice.ecosystemCatalogMissing"));
+        }),
     );
     heading.addButton((b) =>
       b
@@ -802,7 +834,7 @@ export class EnvironmentVariablesView extends ItemView {
       ? {
           id: existing.id,
           name: existing.name,
-          logo: existing.logo,
+          logo: this.plugin.resolveLogo(existing.logo),
           enabled: existing.enabled,
           tag: existing.tag,
           links: existing.links,
@@ -816,7 +848,7 @@ export class EnvironmentVariablesView extends ItemView {
   }
 
   private openMcpAppModal(existing: McpAppConfig | null): void {
-    const target = existing ?? newMcpApp();
+    const target = existing ? { ...existing, logo: this.plugin.resolveLogo(existing.logo) } : newMcpApp();
     new McpAppModal(this.app, this.plugin.data.mcpApps, target, (updated) =>
       existing ? this.plugin.updateMcpApp(updated) : this.plugin.addMcpApp(updated),
     ).open();
@@ -828,7 +860,7 @@ export class EnvironmentVariablesView extends ItemView {
 
     const title = header.createDiv({ cls: "ev-mcp-card-title" });
     const icon = title.createDiv({ cls: "ev-mcp-item-icon" });
-    if (app.logo) icon.createEl("img", { attr: { src: app.logo, alt: "" } });
+    if (app.logo) icon.createEl("img", { attr: { src: this.plugin.resolveLogo(app.logo), alt: "" } });
     else setIcon(icon, "boxes");
     const text = title.createDiv();
     text.createDiv({ text: app.name, cls: "ev-mcp-card-heading" });
@@ -856,7 +888,7 @@ export class EnvironmentVariablesView extends ItemView {
     const row = parent.createDiv({ cls: "ev-mcp-item" });
 
     const icon = row.createDiv({ cls: "ev-mcp-item-icon" });
-    if (item.logo) icon.createEl("img", { attr: { src: item.logo, alt: "" } });
+    if (item.logo) icon.createEl("img", { attr: { src: this.plugin.resolveLogo(item.logo), alt: "" } });
     else setIcon(icon, "layers");
 
     const info = row.createDiv({ cls: "ev-mcp-item-info" });
@@ -888,7 +920,7 @@ export class EnvironmentVariablesView extends ItemView {
 
     const title = header.createDiv({ cls: "ev-mcp-card-title" });
     const icon = title.createDiv({ cls: "ev-mcp-item-icon" });
-    if (group.logo) icon.createEl("img", { attr: { src: group.logo, alt: "" } });
+    if (group.logo) icon.createEl("img", { attr: { src: this.plugin.resolveLogo(group.logo), alt: "" } });
     else setIcon(icon, "layers");
     const text = title.createDiv();
     text.createDiv({ text: group.name, cls: "ev-mcp-card-heading" });

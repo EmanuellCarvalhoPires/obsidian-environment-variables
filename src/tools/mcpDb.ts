@@ -15,6 +15,7 @@ export interface McpDbToolRow {
   service_tag: string | null;
   service_param: string | null;
   service_exclude_tag: string | null;
+  response_fields?: string | null;
   params_schema: string | null;
   tags: string | null;
 }
@@ -129,6 +130,7 @@ export class McpDbManager {
             serviceExcludeTag: row.service_exclude_tag ?? undefined,
             mcpName,
             mcpKeys,
+            responseFields: parseResponseFields(row.response_fields),
             status: "ready",
             problems: [],
             warnings: [],
@@ -173,6 +175,12 @@ export class McpDbManager {
     } catch {
       return undefined;
     }
+  }
+
+  /** Gets response_fields projection paths for a given tool name, or undefined. */
+  getResponseFieldsForTool(toolName: string): string[] | undefined {
+    if (!this.isLoaded) this.refresh();
+    return this.toolsByName.get(toolName)?.tool.responseFields;
   }
 
   /** Gets a synthesized VaultNote and markdown body for a request tool. */
@@ -258,4 +266,29 @@ function readPackage(db: DatabaseSync): PackageIdentity | undefined {
 function packageKeys(pkg: PackageIdentity | undefined, folder: string | undefined, basename: string): string[] {
   const raw = [pkg?.id, pkg?.name, pkg?.app, pkg?.tag ? pkg.tag.split("/").pop() : undefined, folder, basename === "mcp" ? undefined : basename];
   return [...new Set(raw.filter((k): k is string => !!k).map(normalizeMcpKey).filter(Boolean))];
+}
+
+/** Parses response_fields column (JSON array or comma-separated string) into a list of field paths. */
+function parseResponseFields(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (Array.isArray(raw)) {
+    const list = raw.map(String).map((s) => s.trim()).filter(Boolean);
+    return list.length > 0 ? list : undefined;
+  }
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        const list = parsed.map(String).map((s) => s.trim()).filter(Boolean);
+        return list.length > 0 ? list : undefined;
+      }
+    } catch {
+      // Fall through to comma split
+    }
+  }
+  const parts = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : undefined;
 }

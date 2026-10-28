@@ -73,6 +73,8 @@ export interface ToolEntry {
   mcpName?: string;
   /** Names the package answers to in the `mcp` filter of search_vault_tools (package id, name, app, tag, folder). */
   mcpKeys?: string[];
+  /** Optional response field projection paths loaded from mcp.db (item 6). */
+  responseFields?: string[];
   status: ToolStatus;
   problems: string[];
   warnings: string[];
@@ -111,7 +113,8 @@ export type ToolErrorCode =
   | "denied"
   | "script_error"
   | "timeout"
-  | "request_failed";
+  | "request_failed"
+  | "limit_reached";
 
 /** An error meant for the AI client: the message says what to fix. */
 export class ToolError extends Error {

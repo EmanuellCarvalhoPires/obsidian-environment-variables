@@ -21,4 +21,11 @@ describe("settings migration", () => {
     const data = withDefaults({ settings: { ...DEFAULT_SETTINGS, autoLockMinutes: 15 }, settingsRevision: 1 });
     expect(data.settings.autoLockMinutes).toBe(15);
   });
+
+  it("drops the legacy mcpCatalogUrl setting and keeps the others", () => {
+    const data = withDefaults({ settings: { mcpCatalogUrl: "x", autoLockMinutes: 30 } } as never);
+    expect(data.settings).not.toHaveProperty("mcpCatalogUrl");
+    expect(data.settings.autoLockMinutes).toBe(30);
+    expect(data.settings.port).toBe(DEFAULT_SETTINGS.port);
+  });
 });

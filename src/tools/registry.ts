@@ -2,7 +2,7 @@
 // This is the "script that lists all tools": MCP tools/list and the Tools panel read from here.
 
 import { parseToolNote } from "./definition";
-import { hasTag, NoteSource, ServiceChoice, ToolEntry, ToolStatus, VaultNote } from "./types";
+import { hasTag, NoteSource, ServiceChoice, ToolEntry, ToolError, ToolStatus, VaultNote } from "./types";
 
 /**
  * The value the AI passes for each instance note. The part of the names that every note shares
@@ -25,6 +25,27 @@ export function serviceChoices(notes: VaultNote[]): ServiceChoice[] {
   const ids = names.map((n) => n.slice(prefix.length).trim() || n);
   const unique = new Set(ids).size === ids.length;
   return sorted.map((n, i) => ({ id: unique ? ids[i] : n.name, notePath: n.path, noteName: n.name }));
+}
+
+/**
+ * The id of the instance the AI meant. Exact id first, then the whole note name, then a name that ends with
+ * the text ("CSP Tech" for "Jira Access - CSP Tech"), all without caring about case. Undefined when nothing
+ * matches (the enum check then lists the valid ids); throws when more than one choice matches.
+ */
+export function resolveServiceChoice(choices: ServiceChoice[], input: string): string | undefined {
+  const wanted = input.trim().toLowerCase();
+  if (!wanted) return undefined;
+  const tiers: Array<(c: ServiceChoice) => boolean> = [
+    (c) => c.id === input,
+    (c) => c.id.toLowerCase() === wanted || c.noteName.toLowerCase() === wanted,
+    (c) => c.id.toLowerCase().endsWith(wanted) || c.noteName.toLowerCase().endsWith(wanted),
+  ];
+  for (const matches of tiers) {
+    const found = choices.filter(matches);
+    if (found.length === 1) return found[0].id;
+    if (found.length > 1) throw new ToolError("invalid_argument", `"${input}" matches more than one instance: ${found.map((c) => c.id).join(", ")}. Use the full name.`);
+  }
+  return undefined;
 }
 
 function choiceKey(e: ToolEntry): string {
@@ -167,6 +188,11 @@ export class ToolRegistry {
     for (const e of this.parsed.values()) {
       if (e.serviceTag && hasTag(tags, e.serviceTag)) return true;
     }
+    if (this.dbToolsProvider) {
+      for (const e of this.dbToolsProvider()) {
+        if (e.serviceTag && hasTag(tags, e.serviceTag)) return true;
+      }
+    }
     return false;
   }
 
@@ -299,7 +325,7 @@ export class ToolRegistry {
         type: "string",
         required: true,
         enum: ids,
-        description: `Which instance to use: ${ids.join(", ")}. Each value is a note tagged #${tag}.`,
+        description: `Which instance to use. Each value is a note tagged #${tag}.`,
       },
       ...entry.params,
     };

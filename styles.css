@@ -500,63 +500,8 @@
   display: none;
 }
 
-/* Download MCP modal: a list of packages, each expandable into a list of its tools. */
-.ev-mcp-download-modal {
-  max-height: 70vh;
-  overflow-y: auto;
-}
-
 .ev-mcp-row-icon {
   margin-right: var(--size-4-2);
-}
-
-.ev-mcp-download-item + .ev-mcp-download-item {
-  margin-top: var(--size-4-2);
-}
-
-/* A package's tool/request counts: shown only once its row is expanded, above the divider. */
-.ev-mcp-download-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--size-4-1) var(--size-4-3);
-  margin-bottom: var(--size-4-2);
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-}
-
-/* Separates the app's header row from its expanded tool list. */
-.ev-mcp-download-divider {
-  margin: 0 0 var(--size-4-3);
-  border: none;
-  border-top: 1px solid var(--background-modifier-border);
-}
-
-.ev-progress {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--background-modifier-border);
-  overflow: hidden;
-}
-
-.ev-progress-bar {
-  height: 100%;
-  width: 0;
-  background: var(--interactive-accent);
-  transition: width 0.15s ease;
-}
-
-.ev-mcp-download-status {
-  margin-top: var(--size-4-1);
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-}
-
-.ev-mcp-download-status.ev-error {
-  color: var(--text-error);
-}
-
-.ev-mcp-download-tools {
-  margin: var(--size-4-2) 0 var(--size-4-3) var(--size-4-4);
 }
 
 /* Logs */

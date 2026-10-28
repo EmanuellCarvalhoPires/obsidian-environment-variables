@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildApiIndexEntries, effectOf, toApiIndexEntry } from "../src/tools/apiIndex";
+import { buildApiIndexEntries, effectOf, toApiIndexEntry, withoutPackageDbTools } from "../src/tools/apiIndex";
 import { metadataFor, NATIVE_TOOL_METADATA } from "../src/tools/hubMetadata";
 import { BUILT_IN_TOOLS } from "../src/server/mcp";
 import { META_TOOLS } from "../src/tools/service";
@@ -58,10 +58,18 @@ describe("api index", () => {
   });
 });
 
+describe("withoutPackageDbTools", () => {
+  it("keeps the tool notes and drops the tools of a package database, in any letter case", () => {
+    const notes = [tool("a", { notePath: "Tools/a.md" }), tool("b", { notePath: "Notas/banco.db.md" })];
+    const packageDb = [tool("c", { notePath: "mcp.db" }), tool("d", { notePath: "Pacote/Jira.DB" })];
+    expect(withoutPackageDbTools([...notes, ...packageDb]).map((e) => e.name)).toEqual(["a", "b"]);
+  });
+});
+
 describe("native tool metadata", () => {
-  it("covers the 8 native tools with every field", () => {
+  it("covers the native tools with every field", () => {
     const names = [...BUILT_IN_TOOLS.map((t) => t.name), ...META_TOOLS.map((t) => t.name), CREATE_SECRET_TOOL_NAME];
-    expect(new Set(names).size).toBe(8);
+    expect(new Set(names).size).toBe(4);
     for (const name of names) {
       const m = NATIVE_TOOL_METADATA[name];
       expect(m, name).toBeDefined();
@@ -75,10 +83,11 @@ describe("native tool metadata", () => {
 });
 
 describe("tools/list in indexed mode", () => {
-  it("never lists the API tools one by one, but indexes all of them", async () => {
+  it("never lists the API tools one by one, and indexes only the tool notes", async () => {
     const { ToolsService } = await import("../src/tools/service");
     const apiTools = Array.from({ length: 50 }, (_, i) => tool(`jira_tool_${i}`));
-    const registry = { list: () => apiTools, onChange: () => () => undefined, ensureFresh: async () => undefined, get: () => undefined };
+    const noteTool = tool("vault_note_tool", { notePath: "Tools/note.md" });
+    const registry = { list: () => [...apiTools, noteTool], onChange: () => () => undefined, ensureFresh: async () => undefined, get: () => undefined };
     const service = new ToolsService({
       registry: registry as never,
       source: { byTag: () => [], resolve: () => undefined, read: async () => "" } as never,
@@ -91,6 +100,7 @@ describe("tools/list in indexed mode", () => {
     const listed = service.mcpTools().map((t) => t.name);
     expect(listed.some((n) => n.startsWith("jira_tool_"))).toBe(false);
     expect(listed).toEqual(META_TOOLS.map((t) => t.name));
-    expect((await service.apiIndexEntries()).length).toBe(50);
+    // The package tools (mcp.db) are indexed by AI Ecosystem's tools.db, not here.
+    expect((await service.apiIndexEntries()).map((e) => e.name)).toEqual(["vault_note_tool"]);
   });
 });

@@ -28,8 +28,6 @@ export interface Settings {
   scriptTimeoutSeconds: number;
   /** Language of the plugin: "auto" follows Obsidian's language. */
   language: LanguageSetting;
-  /** Base raw URL of the repo the "Download MCP" screen reads its catalog from. */
-  mcpCatalogUrl: string;
   /**
    * Vault folder where the tool notes live, shared with AI Ecosystem's hooks so Grep stays allowed there.
    * Empty: worked out from where the tool notes are.
@@ -38,8 +36,6 @@ export interface Settings {
 }
 
 export type LanguageSetting = "auto" | "en" | "pt-BR";
-
-export const DEFAULT_MCP_CATALOG_URL = "https://raw.githubusercontent.com/EmanuellCarvalhoPires/environment-keys-mcp-packages/main";
 
 export const DEFAULT_SETTINGS: Settings = {
   serverEnabled: false,
@@ -57,7 +53,6 @@ export const DEFAULT_SETTINGS: Settings = {
   requestTag: "api/request",
   scriptTimeoutSeconds: 30,
   language: "auto",
-  mcpCatalogUrl: DEFAULT_MCP_CATALOG_URL,
   toolNotesFolder: "",
 };
 
@@ -72,13 +67,15 @@ export interface NameEntry {
 export interface PluginData {
   settings: Settings;
   clients: ClientRecord[];
-  audit: AuditEntry[];
+  audit?: AuditEntry[];
   /** Names and types only, so references can be inserted while the vault is locked. */
   nameIndex: NameEntry[];
   /** User-defined MCP groupings (e.g. "Jira Cloud MCP"): a name, a logo and which tools count as members. */
   mcpGroups: McpGroupConfig[];
   /** Two-level grouping: an app card (e.g. "Atlassian") that lists one or more of the MCPs above. */
   mcpApps: McpAppConfig[];
+  /** Deduplicated base64 logos keyed by content hash. */
+  logos?: Record<string, string>;
   /** Settings migrations already applied (see migrate). */
   settingsRevision: number;
   /** Ids of the bundled instance templates already created once (see serviceTemplates.ts). */
@@ -94,7 +91,9 @@ const OLD_AUTO_LOCK_DEFAULT = 15;
 const SETTINGS_REVISION = 1;
 
 export function withDefaults(raw: Partial<PluginData> | null | undefined): PluginData {
-  const settings = { ...DEFAULT_SETTINGS, ...(raw?.settings ?? {}) };
+  const settings: Settings & { mcpCatalogUrl?: unknown } = { ...DEFAULT_SETTINGS, ...(raw?.settings ?? {}) };
+  // Legacy key from an older version: dropped so it is not written back to data.json.
+  delete settings.mcpCatalogUrl;
   const revision = typeof raw?.settingsRevision === "number" ? raw.settingsRevision : 0;
   // Revision 1: auto-lock is off by default. Only data still on the old default changes.
   if (revision < 1 && raw?.settings && settings.autoLockMinutes === OLD_AUTO_LOCK_DEFAULT) settings.autoLockMinutes = 0;
@@ -102,7 +101,7 @@ export function withDefaults(raw: Partial<PluginData> | null | undefined): Plugi
     settings,
     settingsRevision: SETTINGS_REVISION,
     clients: Array.isArray(raw?.clients) ? raw.clients : [],
-    audit: Array.isArray(raw?.audit) ? raw.audit : [],
+    audit: Array.isArray(raw?.audit) ? raw.audit : undefined,
     nameIndex: Array.isArray(raw?.nameIndex)
       ? raw.nameIndex.filter((e): e is NameEntry => typeof e?.name === "string" && typeof e?.type === "string")
       : [],
@@ -110,6 +109,7 @@ export function withDefaults(raw: Partial<PluginData> | null | undefined): Plugi
       ? raw.mcpGroups.filter((g): g is McpGroupConfig => typeof g?.id === "string" && typeof g?.name === "string" && Array.isArray(g?.links))
       : [],
     mcpApps: Array.isArray(raw?.mcpApps) ? raw.mcpApps.filter((a): a is McpAppConfig => typeof a?.id === "string" && typeof a?.name === "string") : [],
+    logos: typeof raw?.logos === "object" && raw?.logos !== null ? raw.logos : {},
     createdTemplates: Array.isArray(raw?.createdTemplates) ? raw.createdTemplates.filter((id): id is string => typeof id === "string") : [],
     hostIndex: Array.isArray(raw?.hostIndex) ? raw.hostIndex.filter((h): h is string => typeof h === "string") : [],
     serviceHosts: Array.isArray(raw?.serviceHosts) ? raw.serviceHosts.filter((h): h is string => typeof h === "string") : [],

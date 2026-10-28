@@ -1,10 +1,10 @@
 import { AuditLog } from "../audit/auditLog";
 import { canUse, ClientContext } from "../server/clients";
 import { SecretStore, VaultLockedError } from "../store/secretStore";
-import { SecretMetadata, toMetadata } from "../store/types";
+import { CompactSecretMetadata, SecretMetadata, toCompactMetadata, toMetadata } from "../store/types";
 import { PlaceholderError } from "./placeholders";
 import { PolicyError, prepareRequest, PreparedRequest, RequestInput } from "./prepare";
-import { createRedactor, Redactor } from "./redact";
+import { createRedactor, REDACTED, Redactor } from "./redact";
 import { BodyEncoding, Transport } from "./transport";
 
 export interface BrokerLimits {
@@ -59,6 +59,8 @@ export interface BrokerFailure {
 }
 
 export type BrokerResult = BrokerSuccess | BrokerFailure;
+export type { CompactSecretMetadata };
+export { toCompactMetadata };
 
 export class Broker {
   constructor(
@@ -72,15 +74,30 @@ export class Broker {
   ) {}
 
   /** Only the variables this client may use. */
-  listSecrets(client: ClientContext): { ok: true; secrets: SecretMetadata[] } | BrokerFailure {
+  listSecrets(client: ClientContext, detail: true): { ok: true; secrets: SecretMetadata[] } | BrokerFailure;
+  listSecrets(client: ClientContext, detail?: false): { ok: true; secrets: CompactSecretMetadata[] } | BrokerFailure;
+  listSecrets(client: ClientContext, detail?: boolean): { ok: true; secrets: (SecretMetadata | CompactSecretMetadata)[] } | BrokerFailure;
+  listSecrets(
+    client: ClientContext,
+    detail = false,
+  ): { ok: true; secrets: (SecretMetadata | CompactSecretMetadata)[] } | BrokerFailure {
     if (!this.store.isUnlocked) {
       this.audit.add({ client: client.name, action: "list", secrets: [], outcome: "locked" });
       return fail("locked", new VaultLockedError().message);
     }
     this.onActivity();
-    this.audit.add({ client: client.name, action: "list", secrets: [], outcome: "ok" });
+
     const secrets = this.store.list().filter((s) => canUse(client.access, s.id));
-    return { ok: true, secrets: secrets.map(toMetadata) };
+    const mapped = detail ? secrets.map(toMetadata) : secrets.map(toCompactMetadata);
+    return { ok: true, secrets: mapped };
+  }
+
+  /** Redacts secrets and values from arbitrary text (e.g. script console/ctx.log lines). */
+  redact(text: string, alsoRedact: string[] = []): string {
+    if (!this.store.isUnlocked) return text;
+    const extra = alsoRedact.map((n) => this.store.get(n)).filter((s): s is NonNullable<typeof s> => s !== undefined);
+    const redactor = createRedactor([...this.store.list(), ...extra], REDACTED, this.store.listValues());
+    return redactor.redact(text).text;
   }
 
   /**

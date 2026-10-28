@@ -1,4 +1,4 @@
-import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon, TFile, TFolder } from "obsidian";
+import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon, TFolder } from "obsidian";
 import { AuditLog } from "./audit/auditLog";
 import { createSetupHandler, HooksDataPusher, hooksHosts, toolNoteFolders } from "./ecosystem/hooksFeed";
 import { installAndEnableEcosystem } from "./ecosystem/installEcosystem";
@@ -15,8 +15,11 @@ import {
   HooksService,
   HubTool,
   IndexedToolRunner,
+  InstalledMcpPackage,
   isEcosystemEnabled,
   listEcosystemServiceNames,
+  MCP_PACKAGES_SERVICE,
+  McpPackagesService,
   MODULE_ID,
   ModuleRegistration,
   SUPPORTED_API_VERSION,
@@ -34,33 +37,24 @@ import { detectToken } from "./secrets/tokenPatterns";
 import { nodeTransport } from "./secrets/transport";
 import { accessOf, ClientAccess, ClientContext, ClientRecord, contextOf, createClient, findClient } from "./server/clients";
 import { LocalServer, PortInUseError, PortOwner, probePort, statusFor } from "./server/localServer";
-import { buildMcpInstructions, BUILT_IN_TOOLS, executeMcpToolCall, PROMPTS } from "./server/mcp";
+import { buildMcpInstructions, BUILT_IN_TOOLS, executeMcpToolCall, executeVaultToolRun, PROMPTS } from "./server/mcp";
 import { SERVER_NAME_PATTERN, serverNameFor, vaultIdOf } from "./server/vaultIdentity";
 import { LanguageSetting, NameEntry, PluginData, withDefaults } from "./settings";
 import { SecretStore, VaultIO } from "./store/secretStore";
-import { HttpGithubReader } from "./tools/githubReader";
-import { buildGuide } from "./tools/guide";
-import {
-  appForEntry,
-  fetchCatalog,
-  fetchPackageManifest,
-  filesToInstall,
-  McpCatalog,
-  McpCatalogEntry,
-  McpDownloadSelection,
-  McpPackageManifest,
-  needsServiceTemplate,
-  serviceTemplateFileName,
-} from "./tools/mcpCatalog";
-import { computeMcpGroupStats, matchedNotePaths, McpAppConfig, McpGroupConfig, McpGroupStats, randomGroupId } from "./tools/mcpGroups";
+import { buildGuide, guideIndex, guideTopic } from "./tools/guide";
+import { appForEntry, McpCatalogEntry } from "./tools/mcpCatalog";
+import { migrateStorage } from "./storageMigration";
+import { computeMcpGroupStats, hashLogo, matchedNotePaths, McpAppConfig, McpGroupConfig, McpGroupStats, randomGroupId } from "./tools/mcpGroups";
 import { McpDbManager } from "./tools/mcpDb";
+import { planGroupSync } from "./tools/mcpPackagesSync";
 import { metadataFor, NATIVE_TOOL_METADATA } from "./tools/hubMetadata";
 import { CREATE_SECRET_TOOL_NAME, createSecretHubTool, CreateSecretPrefill, CreateSecretScreen } from "./tools/createSecretTool";
 import { ObsidianNoteSource } from "./tools/obsidianSource";
 import { ToolRegistry } from "./tools/registry";
 import { ScriptRunner } from "./tools/scriptRunner";
 import { ToolsService } from "./tools/service";
-import { serviceTemplateFor, templatesToCreate, templateText } from "./tools/serviceTemplates";
+import { computeSyncHash } from "./tools/syncHash";
+import { templatesToCreate, templateText } from "./tools/serviceTemplates";
 import { NoteSource } from "./tools/types";
 import { defaultLogoFor } from "./ui/defaultLogos";
 import { ApprovalModal, referenceFor, SecretModal, SecretPickerModal } from "./ui/modals";
@@ -100,6 +94,8 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   private disposeSecretService: (() => void) | undefined;
   private disposeToolRunner: (() => void) | undefined;
   private disposeServiceListener: (() => void) | undefined;
+  private disposeMcpPackagesWatch: (() => void) | undefined;
+  private mcpPackagesUnsub: (() => void) | undefined;
   private disposeSetupHandler: (() => void) | undefined;
   private readonly hooksPusher = new HooksDataPusher();
   private transitionNoticeShown = false;
@@ -108,9 +104,27 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   vaultName = "";
   /** Connected AI clients still point at an old name or port: re-register them once the server runs. */
   private pendingReconnect = false;
+  /** In-memory last hash of tools and instances pushed to AI Ecosystem. */
+  private lastSyncHash: string | null = null;
+
+  get pluginDirPath(): string {
+    return this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+  }
 
   get vaultFilePath(): string {
-    return `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/vault.enc`;
+    return `${this.pluginDirPath}/vault.enc`;
+  }
+
+  get auditFilePath(): string {
+    return `${this.pluginDirPath}/audit.json`;
+  }
+
+  get dataFilePath(): string {
+    return `${this.pluginDirPath}/data.json`;
+  }
+
+  get backupDataFilePath(): string {
+    return `${this.pluginDirPath}/data.json.bak`;
   }
 
   get isEcosystemConnected(): boolean {
@@ -130,15 +144,23 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     await this.ensureServerName();
 
     const adapter = this.app.vault.adapter;
+    const migration = await migrateStorage({
+      adapter,
+      pluginDir: this.pluginDirPath,
+      data: this.data,
+    });
+    this.data = migration.data;
+
     const path = this.vaultFilePath;
     const io: VaultIO = {
       read: async () => ((await adapter.exists(path)) ? adapter.read(path) : null),
       write: (content) => adapter.write(path, content),
     };
     this.store = new SecretStore(io);
-    this.audit = new AuditLog(this.data.audit, (entries) => {
-      this.data.audit = entries;
-      this.scheduleSave();
+    this.audit = new AuditLog(migration.auditEntries, (entries) => {
+      void adapter.write(this.auditFilePath, JSON.stringify(entries, null, 2)).catch((err) => {
+        console.error("[environment-variables] Failed to write audit.json:", err);
+      });
     });
 
     const limits = () => ({
@@ -205,13 +227,14 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       runner: new ScriptRunner(),
       audit: this.audit,
       settings: () => ({ ...s() }),
-      guide: () => this.agentGuide(),
+      guide: (topic?: string) => this.agentGuide(undefined, topic),
       dbManager: this.mcpDb,
     });
     this.register(this.registry.onChange(() => this.syncEcosystemTools()));
     this.register(this.registry.onChange(() => this.syncHooksData()));
     // Only tool notes, instance notes and package databases (*.db) trigger updates.
     this.registerEvent(this.app.metadataCache.on("changed", (file) => this.onNoteEvent(() => this.registry.noteChanged(file.path))));
+    this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleToolScan()));
     this.registerEvent(this.app.vault.on("delete", (file) => {
       if (file.name.endsWith(".db")) {
         this.mcpDb.refresh();
@@ -350,6 +373,10 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.disposeSecretService = undefined;
     this.disposeToolRunner?.();
     this.disposeToolRunner = undefined;
+    this.mcpPackagesUnsub?.();
+    this.mcpPackagesUnsub = undefined;
+    this.disposeMcpPackagesWatch?.();
+    this.disposeMcpPackagesWatch = undefined;
     this.connector?.stop();
     void this.server?.stop();
     this.server = null;
@@ -538,7 +565,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     return {
       id: client.id || "ecosystem-client",
       name: client.name || "AI Ecosystem Client",
-      access: { mode: "all" },
+      access: this.isEcosystemConnected ? { mode: "all" } : { mode: "some", secretIds: [] },
     };
   }
 
@@ -642,6 +669,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
           broker: this.broker,
           client: this.resolveHubClient(ctx.client),
           tools: this.tools,
+          responseWriter: this.app.vault.adapter,
         });
         return {
           content: res.content,
@@ -692,7 +720,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       arguments: def.arguments,
       handler: (args) => ({
         description: def.description,
-        messages: [{ role: "user", content: { type: "text", text: this.agentGuide(args.request) } }],
+        messages: [{ role: "user", content: { type: "text", text: this.agentGuide(args.request, typeof args.topic === "string" ? args.topic : undefined) } }],
       }),
     }));
   }
@@ -701,6 +729,12 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   syncEcosystemTools(): void {
     const api = this.connector?.api;
     if (!api) return;
+
+    const tools = this.tools.enabled() ? this.registry.list() : [];
+    const hash = computeSyncHash(tools);
+    if (hash === this.lastSyncHash) return;
+    this.lastSyncHash = hash;
+
     try {
       api.updateTools(MODULE_ID, this.buildHubTools());
       api.updatePrompts(MODULE_ID, this.buildHubPrompts());
@@ -742,8 +776,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   /** `tool-runner:environment-variables`: runs indexed API tools for tools_run (secrets resolved by the broker). */
   private readonly toolRunner: IndexedToolRunner = {
     run: async (id, args, ctx) => {
-      const res = await executeMcpToolCall("run_vault_tool", { name: id, arguments: args }, {
-        broker: this.broker,
+      const res = await executeVaultToolRun(id, args, {
         client: this.resolveHubClient(ctx.client),
         tools: this.tools,
       });
@@ -779,6 +812,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
             hint: c.hint,
             createdAt: c.createdAt,
             lastUsedAt: c.lastUsedAt,
+            integration: c.integration,
           })),
           MODULE_ID,
         )
@@ -806,6 +840,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       }
     });
     this.connectHooks(api);
+    this.connectMcpPackages(api);
 
     if (this.store.isUnlocked) {
       void this.adoption.scanAll(api, listEcosystemServiceNames(this.app));
@@ -878,8 +913,9 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       broker: this.broker,
       version: this.manifest.version,
       tools: this.tools,
-      guide: (request) => this.agentGuide(request),
+      guide: (request, topic) => this.agentGuide(request, topic),
       vault: { id: this.vaultId, name: this.vaultName },
+      responseWriter: this.app.vault.adapter,
       authenticate: async (token) => {
         const client = await findClient(this.data.clients, token);
         if (!client) return null;
@@ -1141,7 +1177,22 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     return this.cachedGroupStats;
   }
 
+  resolveLogo(ref: string | undefined): string {
+    if (!ref) return "";
+    return this.data.logos?.[ref] ?? ref;
+  }
+
+  storeLogo(dataUri: string): string {
+    if (!dataUri) return "";
+    if (this.data.logos && Object.prototype.hasOwnProperty.call(this.data.logos, dataUri)) return dataUri;
+    const key = hashLogo(dataUri);
+    this.data.logos ??= {};
+    this.data.logos[key] = dataUri;
+    return key;
+  }
+
   async addMcpGroup(group: McpGroupConfig): Promise<void> {
+    group.logo = this.storeLogo(group.logo);
     this.data.mcpGroups.push(group);
     await this.saveAll();
     this.emitServerChange();
@@ -1150,6 +1201,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   async updateMcpGroup(group: McpGroupConfig): Promise<void> {
     const i = this.data.mcpGroups.findIndex((g) => g.id === group.id);
     if (i === -1) return;
+    group.logo = this.storeLogo(group.logo);
     this.data.mcpGroups[i] = group;
     await this.saveAll();
     this.emitServerChange();
@@ -1178,6 +1230,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   }
 
   async addMcpApp(app: McpAppConfig): Promise<void> {
+    app.logo = this.storeLogo(app.logo);
     this.data.mcpApps.push(app);
     await this.saveAll();
     this.emitServerChange();
@@ -1186,6 +1239,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
   async updateMcpApp(app: McpAppConfig): Promise<void> {
     const i = this.data.mcpApps.findIndex((a) => a.id === app.id);
     if (i === -1) return;
+    app.logo = this.storeLogo(app.logo);
     this.data.mcpApps[i] = app;
     await this.saveAll();
     this.emitServerChange();
@@ -1207,105 +1261,11 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.emitServerChange();
   }
 
-  // ---------- Download MCP: ready-made packages fetched from GitHub ----------
-
-  private githubReader(): HttpGithubReader {
-    return new HttpGithubReader(this.data.settings.mcpCatalogUrl);
-  }
-
-  fetchMcpCatalog(): Promise<McpCatalog> {
-    return fetchCatalog(this.githubReader());
-  }
-
-  fetchMcpPackageManifest(entry: McpCatalogEntry): Promise<McpPackageManifest> {
-    return fetchPackageManifest(this.githubReader(), entry);
-  }
-
-  /** The note every downloaded package links up to, reused by name if the vault already has one. */
-  private async ensureMcpHubNote(): Promise<string> {
-    const existing = this.app.vault.getMarkdownFiles().find((f) => f.basename === MCP_HUB_NOTE_NAME);
-    if (existing) return existing.parent?.path ?? "";
-    const content = [
-      "---",
-      "tags:",
-      "  - moc",
-      "  - mcp",
-      "---",
-      `# ${MCP_HUB_NOTE_NAME}`,
-      "",
-      "Index of the MCP tool packages downloaded through Environment Keys.",
-      "",
-      "## Related notes",
-      "```dataview",
-      "LIST FROM [[]] WHERE contains(flat(list(up)), this.file.link)",
-      "SORT file.name ASC",
-      "```",
-      "",
-    ].join("\n");
-    await this.app.vault.create(`${MCP_HUB_NOTE_NAME}.md`, content);
-    return "";
-  }
-
-  /**
-   * Downloads a package (or one of its tools) into the vault: existing files are left untouched,
-   * and the package is registered as an MCP group so its stats show up in the panel.
-   * `onProgress` is called after each file is fetched (written or skipped), for a progress bar.
-   */
-  async downloadMcpPackage(
-    entry: McpCatalogEntry,
-    manifest: McpPackageManifest,
-    selection: McpDownloadSelection,
-    onProgress?: (done: number, total: number) => void,
-  ): Promise<{ written: number; skipped: number; templateCreated: boolean }> {
-    const reader = this.githubReader();
-    const hubFolder = await this.ensureMcpHubNote();
-    const packageFolder = normalizePath(hubFolder ? `${hubFolder}/${entry.name}` : entry.name);
-    const files = filesToInstall(manifest, selection);
-
-    const madeFolders = new Set<string>();
-    let written = 0;
-    let skipped = 0;
-    for (const file of files) {
-      // A database is named after its package id: packages sharing a folder (Confluence v1/v2,
-      // the three Jira Service Management ones) would otherwise all write the same mcp.db.
-      const target = normalizePath(`${packageFolder}/${file.kind === "database" ? `${entry.id}.db` : file.path}`);
-      const existing = this.app.vault.getAbstractFileByPath(target);
-      const folder = target.slice(0, target.lastIndexOf("/"));
-      if (folder && !madeFolders.has(folder)) {
-        madeFolders.add(folder);
-        if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
-      }
-
-      if (file.kind === "database") {
-        const buffer = await reader.fetchBinary(`${entry.path}/${file.path}`);
-        if (existing instanceof TFile) {
-          await this.app.vault.modifyBinary(existing, buffer);
-        } else if (!existing) {
-          await this.app.vault.createBinary(target, buffer);
-        }
-        written++;
-      } else {
-        if (existing) {
-          skipped++;
-        } else {
-          const content = await reader.fetchText(`${entry.path}/${file.path}`);
-          await this.app.vault.create(target, content);
-          written++;
-        }
-      }
-      onProgress?.(written + skipped, files.length);
-    }
-
-    const templateCreated = await this.ensureServiceTemplate(reader, entry, hubFolder);
-    this.upsertMcpGroupForPackage(entry);
-    await this.saveAll();
-    this.emitServerChange();
-    return { written, skipped, templateCreated };
-  }
+  // ---------- MCP packages installed through AI Ecosystem: groups and instance templates ----------
 
   /**
    * Creates the bundled instance templates the vault does not have yet, once each, in the
-   * "Instances" folder next to the hub note. A template the user deleted is not created again.
+   * "Instances" folder (see instancesFolder). A template the user deleted is not created again.
    */
   private async createServiceTemplates(): Promise<void> {
     const pending = templatesToCreate(this.data.createdTemplates, (tag) => this.toolSource.byTag(tag));
@@ -1324,49 +1284,34 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     }
   }
 
-  /** The "Instances" folder next to the hub note, created if missing. */
+  /**
+   * The "Instances" folder next to the "MCP Tools" note when the vault has one (earlier downloads
+   * created it), else at the vault root. The note itself is no longer created. Created if missing.
+   */
   private async instancesFolder(): Promise<string> {
-    const hubFolder = await this.ensureMcpHubNote();
+    const hub = this.app.vault.getMarkdownFiles().find((f) => f.basename === MCP_HUB_NOTE_NAME);
+    const hubFolder = hub?.parent?.path ?? "";
     const folder = normalizePath(hubFolder ? `${hubFolder}/Instances` : "Instances");
     if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
     return folder;
   }
 
   /**
-   * The first time a package needs a service (serviceTag) the vault has no instance of yet,
-   * downloads that service's template note into an "Instances" folder next to the hub note.
-   */
-  private async ensureServiceTemplate(reader: HttpGithubReader, entry: McpCatalogEntry, hubFolder: string): Promise<boolean> {
-    if (!entry.serviceTag || !entry.serviceTemplate) return false;
-    if (!needsServiceTemplate(entry, this.toolSource.byTag(entry.serviceTag))) return false;
-    const folder = normalizePath(hubFolder ? `${hubFolder}/Instances` : "Instances");
-    if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
-    // The bundled template, in the panel's language, wins over the catalog's copy.
-    const bundled = serviceTemplateFor(entry.serviceTag);
-    const target = normalizePath(`${folder}/${bundled?.fileName ?? serviceTemplateFileName(entry.serviceTag)}`);
-    if (this.app.vault.getAbstractFileByPath(target)) return false;
-    const content = bundled ? templateText(bundled, currentLanguage() === "pt-BR" ? "pt" : "en") : await reader.fetchText(entry.serviceTemplate);
-    await this.app.vault.create(target, content);
-    if (bundled && !this.data.createdTemplates.includes(bundled.id)) this.data.createdTemplates.push(bundled.id);
-    return true;
-  }
-
-  /**
    * Finds the app card a package belongs to (by name), creating it the first time a package
-   * of that app is downloaded. Returns undefined when the package isn't tied to any app.
+   * of that app is installed. Returns undefined when the package isn't tied to any app.
    */
-  private ensureMcpAppForPackage(entry: McpCatalogEntry): string | undefined {
+  private ensureMcpAppForPackage(entry: Pick<McpCatalogEntry, "id" | "name" | "tag" | "logo" | "serviceTag">): string | undefined {
     const info = appForEntry(entry);
     if (!info) return undefined;
     const existing = this.data.mcpApps.find((a) => a.name.trim().toLowerCase() === info.name.toLowerCase());
     if (existing) return existing.id;
-    const app: McpAppConfig = { id: randomGroupId(), name: info.name, logo: defaultLogoFor(info.logo), enabled: true };
+    const app: McpAppConfig = { id: randomGroupId(), name: info.name, logo: this.storeLogo(defaultLogoFor(info.logo)), enabled: true };
     this.data.mcpApps.push(app);
     return app.id;
   }
 
-  /** Registers the package as an MCP group on first download; later downloads just update its files. */
-  private upsertMcpGroupForPackage(entry: McpCatalogEntry): void {
+  /** Registers the package as an MCP group the first time it is seen; later calls only fill in a missing app. */
+  private upsertMcpGroupForPackage(entry: Pick<McpCatalogEntry, "id" | "name" | "tag" | "logo" | "serviceTag">): void {
     const appId = this.ensureMcpAppForPackage(entry);
     const existing = this.data.mcpGroups.find((g) => g.sourcePackageId === entry.id);
     if (existing) {
@@ -1376,7 +1321,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     this.data.mcpGroups.push({
       id: randomGroupId(),
       name: entry.name,
-      logo: defaultLogoFor(entry.logo),
+      logo: this.storeLogo(defaultLogoFor(entry.logo)),
       enabled: true,
       tag: entry.tag,
       links: [],
@@ -1385,13 +1330,86 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     });
   }
 
+  /**
+   * Keeps the MCP groups in step with the packages AI Ecosystem has installed: a group for each new
+   * package, and no group for a package that is gone. Then reloads the .db files and the tools.
+   */
+  private async syncInstalledMcpPackages(service: McpPackagesService): Promise<void> {
+    let installed: InstalledMcpPackage[];
+    try {
+      installed = service.list();
+    } catch (err) {
+      // No list, no removal: the groups stay as they are.
+      console.error("[environment-variables] Could not read the installed MCP packages:", err);
+      return;
+    }
+    const plan = planGroupSync(installed, this.data.mcpGroups);
+    let changed = false;
+    for (const pkg of plan.toAdd) {
+      this.upsertMcpGroupForPackage(pkg);
+      changed = true;
+    }
+    if (plan.toRemoveGroupIds.length > 0) {
+      this.data.mcpGroups = this.data.mcpGroups.filter((g) => !plan.toRemoveGroupIds.includes(g.id));
+      changed = true;
+    }
+    if (changed) {
+      await this.createServiceTemplates();
+      await this.saveAll();
+    }
+    // Always: the .db files on disk may have changed even when no group did (same reload as the vault events).
+    this.mcpDb.refresh();
+    await this.registry.refresh();
+    this.emitServerChange();
+    this.syncEcosystemTools();
+  }
+
+  /** The `mcp-packages` service, or undefined on an AI Ecosystem core that does not have it. */
+  private mcpPackagesService(api: AIEcosystemAPI): McpPackagesService | undefined {
+    try {
+      return api.getService<McpPackagesService>(MCP_PACKAGES_SERVICE);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Syncs now, and again on every change of the installed packages. */
+  private watchMcpPackages(service: McpPackagesService): void {
+    void this.syncInstalledMcpPackages(service);
+    this.mcpPackagesUnsub = service.onChange(() => void this.syncInstalledMcpPackages(service));
+  }
+
+  /** Follows `mcp-packages` for as long as the connection lasts. Does nothing when the service is missing. */
+  private connectMcpPackages(api: AIEcosystemAPI): void {
+    this.mcpPackagesUnsub?.();
+    this.mcpPackagesUnsub = undefined;
+    const service = this.mcpPackagesService(api);
+    if (service) this.watchMcpPackages(service);
+
+    this.disposeMcpPackagesWatch?.();
+    this.disposeMcpPackagesWatch = api.onServiceChange((name, available) => {
+      if (name !== MCP_PACKAGES_SERVICE || !available) return;
+      this.mcpPackagesUnsub?.();
+      this.mcpPackagesUnsub = undefined;
+      const late = this.mcpPackagesService(api);
+      if (late) this.watchMcpPackages(late);
+    });
+  }
+
   /** The prompt for AI agents, in the language of Obsidian. Generic: it names nothing of this vault. */
-  agentGuide(request?: string): string {
-    return buildGuide(currentLanguage() === "pt-BR" ? "pt" : "en", request);
+  agentGuide(request?: string, topic?: string): string {
+    const lang = currentLanguage() === "pt-BR" ? "pt" : "en";
+    if (topic) {
+      return guideTopic(lang, topic);
+    }
+    if (request) {
+      return buildGuide(lang, request);
+    }
+    return guideIndex(lang);
   }
 
   copyAgentGuide(): void {
-    void navigator.clipboard.writeText(this.agentGuide());
+    void navigator.clipboard.writeText(buildGuide(currentLanguage() === "pt-BR" ? "pt" : "en"));
     new Notice(t("notice.guideCopied"), 8_000);
   }
 

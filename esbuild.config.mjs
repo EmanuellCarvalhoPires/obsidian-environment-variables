@@ -4,7 +4,14 @@ import { builtinModules } from "node:module";
 
 const prod = process.argv[2] === "production";
 
-const context = await esbuild.context({
+const nodeBuiltins = [
+  ...builtinModules,
+  ...builtinModules.map((m) => `node:${m}`),
+  // Only Node 24 lists this prefix-only module in builtinModules; Node 22 (CI) does not.
+  "node:sqlite",
+];
+
+const mainContext = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
   external: [
@@ -21,10 +28,7 @@ const context = await esbuild.context({
     "@lezer/common",
     "@lezer/highlight",
     "@lezer/lr",
-    ...builtinModules,
-    ...builtinModules.map((m) => `node:${m}`),
-    // Only Node 24 lists this prefix-only module in builtinModules; Node 22 (CI) does not.
-    "node:sqlite",
+    ...nodeBuiltins,
   ],
   // The AI agent guide (src/tools/guide/*.md) is bundled as text.
   loader: { ".md": "text" },
@@ -37,9 +41,23 @@ const context = await esbuild.context({
   minify: prod,
 });
 
+const quickjsContext = await esbuild.context({
+  entryPoints: ["src/tools/quickjsEntry.ts"],
+  bundle: true,
+  external: nodeBuiltins,
+  format: "cjs",
+  target: "es2022",
+  logLevel: "info",
+  sourcemap: prod ? false : "inline",
+  treeShaking: true,
+  outfile: "quickjs.js",
+  minify: prod,
+});
+
 if (prod) {
-  await context.rebuild();
+  await mainContext.rebuild();
+  await quickjsContext.rebuild();
   process.exit(0);
 } else {
-  await context.watch();
+  await Promise.all([mainContext.watch(), quickjsContext.watch()]);
 }

@@ -3,6 +3,7 @@
 // Membership is computed, not stored: a tag and/or a list of note links, resolved
 // against the vault every time, like the generic tools' service_tag.
 
+import { createHash } from "crypto";
 import type { AuditEntry } from "../audit/auditLog";
 import { normalizeMcpKey } from "./toolSearch";
 import { NoteSource, ToolEntry } from "./types";
@@ -13,7 +14,7 @@ export const MCP_GROUP_NAME_MAX = 60;
 export interface McpAppConfig {
   id: string;
   name: string;
-  /** Data URI of the logo the user picked, or "" for a generic icon. */
+  /** Data URI or unique key of the logo the user picked, or "" for a generic icon. */
   logo: string;
   enabled: boolean;
 }
@@ -21,7 +22,7 @@ export interface McpAppConfig {
 export interface McpGroupConfig {
   id: string;
   name: string;
-  /** Data URI of the logo the user picked, or "" for a generic icon. */
+  /** Data URI or unique key of the logo the user picked, or "" for a generic icon. */
   logo: string;
   enabled: boolean;
   /** Notes with this tag (and its subtags) count as members. "" means no tag filter. */
@@ -108,4 +109,92 @@ export function validateMcpAppName(name: string, others: McpAppConfig[], ownId?:
   if (trimmed.length > MCP_GROUP_NAME_MAX) return `Use at most ${MCP_GROUP_NAME_MAX} characters.`;
   if (others.some((a) => a.id !== ownId && a.name.trim().toLowerCase() === trimmed.toLowerCase())) return "There is already an app with this name.";
   return null;
+}
+
+/** Content hash for a base64 logo. */
+export function hashLogo(content: string): string {
+  if (!content) return "";
+  return createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
+
+/** Checks whether a logo value is a base64 Data URI or raw base64 content rather than a stored key. */
+export function isBase64Logo(val: string): boolean {
+  return typeof val === "string" && (val.startsWith("data:") || val.length > 64);
+}
+
+/**
+ * Migrates base64 logos in groups and apps into the central `logos` dictionary.
+ * Idempotent: logos already referencing a key in `logos` remain untouched.
+ */
+export function migrateLogos(data: {
+  mcpGroups?: McpGroupConfig[];
+  mcpApps?: McpAppConfig[];
+  logos?: Record<string, string>;
+}): { logos: Record<string, string>; changed: boolean } {
+  const logos: Record<string, string> = { ...(data.logos ?? {}) };
+  let changed = false;
+
+  const contentToKey = new Map<string, string>();
+  for (const [key, content] of Object.entries(logos)) {
+    contentToKey.set(content, key);
+  }
+
+  const processEntity = (entity: { logo: string }) => {
+    if (!entity.logo) return;
+    if (entity.logo in logos) return;
+
+    if (isBase64Logo(entity.logo)) {
+      let key = contentToKey.get(entity.logo);
+      if (!key) {
+        key = hashLogo(entity.logo);
+        logos[key] = entity.logo;
+        contentToKey.set(entity.logo, key);
+      }
+      if (entity.logo !== key) {
+        entity.logo = key;
+        changed = true;
+      }
+    }
+  };
+
+  for (const g of data.mcpGroups ?? []) processEntity(g);
+  for (const a of data.mcpApps ?? []) processEntity(a);
+
+  return { logos, changed };
+}
+
+/** True when a group has no name, or matches 0 tools (no tag, no links, and no package id). */
+export function isGroupEmpty(group: McpGroupConfig): boolean {
+  if (!group.name?.trim()) return true;
+  if (!group.tag?.trim() && (!group.links || group.links.length === 0) && !group.sourcePackageId) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Removes empty groups and duplicate groups (same name and same set of tags/links).
+ * Idempotent.
+ */
+export function deduplicateMcpGroups(groups: McpGroupConfig[]): McpGroupConfig[] {
+  if (!Array.isArray(groups)) return [];
+  const out: McpGroupConfig[] = [];
+  const seenSigs = new Set<string>();
+
+  for (const g of groups) {
+    if (isGroupEmpty(g)) continue;
+
+    const canonicalName = g.name.trim().toLowerCase();
+    const canonicalTag = (g.tag ?? "").trim().toLowerCase();
+    const canonicalLinks = Array.from(new Set((g.links ?? []).map((l) => l.trim()).filter(Boolean)))
+      .sort()
+      .join("\n");
+    const sig = `${canonicalName}||${canonicalTag}||${canonicalLinks}`;
+
+    if (seenSigs.has(sig)) continue;
+    seenSigs.add(sig);
+    out.push(g);
+  }
+
+  return out;
 }
