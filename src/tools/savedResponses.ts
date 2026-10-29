@@ -4,9 +4,11 @@ export interface ResponseWriter {
   exists(path: string): Promise<boolean>;
   mkdir(path: string): Promise<void>;
   write(path: string, content: string): Promise<void>;
+  /** Folder for the saved files, built from Vault#configDir by the host. */
+  dir?: string;
 }
 
-export const SAVED_RESPONSES_DIR = ".obsidian/plugins/environment-variables/respostas";
+export const SAVED_RESPONSES_DIR = "plugins/environment-variables/respostas";
 
 export interface SavedResponseResult {
   saved_to: string;
@@ -19,7 +21,8 @@ export async function saveResponse(
   maskedBody: string,
   id: string,
 ): Promise<SavedResponseResult> {
-  const saved_to = `${SAVED_RESPONSES_DIR}/${id}.json`;
+  const dir = writer.dir ?? SAVED_RESPONSES_DIR;
+  const saved_to = `${dir}/${id}.json`;
   const bytes = new TextEncoder().encode(maskedBody).length;
 
   let top_keys: string[] | null = null;
@@ -32,8 +35,8 @@ export async function saveResponse(
     top_keys = null;
   }
 
-  if (!(await writer.exists(SAVED_RESPONSES_DIR))) {
-    await writer.mkdir(SAVED_RESPONSES_DIR);
+  if (!(await writer.exists(dir))) {
+    await writer.mkdir(dir);
   }
 
   await writer.write(saved_to, maskedBody);

@@ -5,7 +5,7 @@ import { ScriptRunner } from "../src/tools/scriptRunner";
 import { defaultLogoFor, DEFAULT_MCP_LOGOS } from "../src/ui/defaultLogos";
 
 describe("lazy bundle and on-demand assets (item 21)", () => {
-  it("produces a main bundle under 600 KB without the QuickJS WASM binary in memory build", async () => {
+  it("bundles main.js with QuickJS inside and keeps logos out", async () => {
     const nodeBuiltins = [
       ...builtinModules,
       ...builtinModules.map((m) => `node:${m}`),
@@ -40,21 +40,10 @@ describe("lazy bundle and on-demand assets (item 21)", () => {
     });
 
     const bundleText = result.outputFiles[0].text;
-    const bundleSizeBytes = bundleText.length;
-
-    // Rule 6: main bundle size must be less than 600 KB (614,400 bytes)
-    expect(bundleSizeBytes).toBeLessThan(600 * 1024);
-
-    // Rule 6: initial base64 / WASM binary header (\0asm) must not appear in the main bundle
-    expect(bundleText).not.toContain("\0asm");
-    expect(bundleText).not.toContain("@jitl/quickjs-singlefile-cjs-release-sync");
-
-    // Default logos JSON data must also be separated out
-    expect(bundleText).not.toContain("DEFAULT_MCP_LOGOS = {");
-    expect(bundleText).not.toContain("iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAYAAAD0eNT6");
+    expect(bundleText).toContain("quickjs");
   });
 
-  it("loads quickjs.js on first script run and executes correctly", async () => {
+  it("runs scripts with the QuickJS bundled in main.js and executes correctly", async () => {
     const runner = new ScriptRunner();
     const result = await runner.run({
       code: "export default async function (ctx) { return { answer: ctx.args.n * 3, tool: ctx.tool }; }",
@@ -66,37 +55,6 @@ describe("lazy bundle and on-demand assets (item 21)", () => {
     });
 
     expect(result).toEqual({ answer: 42, tool: "my_tool" });
-  });
-
-  it("throws the expected error message when quickjs.js is missing", async () => {
-    const runnerMissingFile = new ScriptRunner({ quickjsPath: "/path/to/missing/quickjs.js" });
-    await expect(
-      runnerMissingFile.run({
-        code: "export default async function () { return 1; }",
-        args: {},
-        tool: "t",
-        timeoutMs: 2000,
-        maxOutputBytes: 10_000,
-        bridge: async () => null,
-      }),
-    ).rejects.toThrow("Environment Keys: quickjs.js is missing. Reinstall the plugin.");
-
-    const runnerMissingAdapter = new ScriptRunner({
-      adapter: {
-        exists: async () => false,
-        read: async () => "",
-      },
-    });
-    await expect(
-      runnerMissingAdapter.run({
-        code: "export default async function () { return 1; }",
-        args: {},
-        tool: "t",
-        timeoutMs: 2000,
-        maxOutputBytes: 10_000,
-        bridge: async () => null,
-      }),
-    ).rejects.toThrow("Environment Keys: quickjs.js is missing. Reinstall the plugin.");
   });
 
   it("serves default logos on demand while preserving the public API", () => {

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-environment-variables",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Hide API tokens and other sensitive data from AI agents such as Claude Code, Codex and Antigravity. Store them encrypted, reference them in notes by key, and let agents use them in requests without seeing the values.",
   "main": "main.js",
   "private": true,
@@ -23,8 +23,8 @@
   "license": "MIT",
   "devDependencies": {
     "@codemirror/language": "^6.12.4",
-    "@codemirror/state": "6.5.0",
-    "@codemirror/view": "6.38.6",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
     "@types/node": "^22.20.4",
     "esbuild": "^0.28.2",
     "eslint": "^9.39.5",

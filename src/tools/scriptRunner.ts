@@ -12,20 +12,13 @@
 // - CPU time is limited (time waiting for the host, e.g. a request or an approval, does not count),
 //   and so are memory and stack size.
 
-import type variant from "@jitl/quickjs-singlefile-cjs-release-sync";
+import quickjsVariant from "@jitl/quickjs-singlefile-cjs-release-sync";
 import { newQuickJSWASMModuleFromVariant, QuickJSContext, QuickJSDeferredPromise, QuickJSHandle, QuickJSWASMModule } from "quickjs-emscripten-core";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as vmModule from "node:vm";
-import { createRequire } from "node:module";
 import { setTimeout } from "timers";
 import { ToolError } from "./types";
 
-type QuickJSSyncVariant = typeof variant;
-
 const MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
 const STACK_LIMIT_BYTES = 1024 * 1024;
-const MISSING_QUICKJS_ERROR = "Environment Keys: quickjs.js is missing. Reinstall the plugin.";
 
 /** Runs first in every sandbox: builds ctx on top of two host functions, then removes them. */
 const PRELUDE = String.raw`
@@ -62,131 +55,17 @@ const PRELUDE = String.raw`
 })();
 `;
 
-export interface ScriptRunnerOptions {
-  adapter?: {
-    exists(path: string): Promise<boolean>;
-    read(path: string): Promise<string>;
-  };
-  pluginDir?: string;
-  quickjsPath?: string;
-}
-
-interface AppWithAdapter {
-  vault?: {
-    adapter?: {
-      exists(path: string): Promise<boolean>;
-      read(path: string): Promise<string>;
-    };
-    configDir?: string;
-  };
-  plugins?: {
-    plugins?: Record<string, { manifest?: { dir?: string } }>;
-  };
-}
-
 let defaultQuickJS: Promise<QuickJSWASMModule> | null = null;
 
-async function loadQuickJS(options?: ScriptRunnerOptions): Promise<QuickJSWASMModule> {
-  if (!options && defaultQuickJS) {
-    return defaultQuickJS;
-  }
-
-  const loadPromise = (async () => {
-    let code: string | null = null;
-
-    // 1. Explicit adapter in options
-    if (options?.adapter) {
-      const pluginDir = options.pluginDir ?? ".obsidian/plugins/environment-variables";
-      const filePath = options.quickjsPath ?? `${pluginDir}/quickjs.js`;
-      try {
-        if (await options.adapter.exists(filePath)) {
-          code = await options.adapter.read(filePath);
-        }
-      } catch {
-        // Handled below
-      }
-      if (!code) {
-        throw new ToolError("script_error", MISSING_QUICKJS_ERROR);
-      }
-    }
-
-    // 2. Obsidian vault adapter if running inside Obsidian
-    if (!code && !options?.quickjsPath) {
-      const app = (globalThis as unknown as { app?: AppWithAdapter }).app;
-      const adapter = app?.vault?.adapter;
-      if (adapter) {
-        const pluginDir =
-          app.plugins?.plugins?.["environment-variables"]?.manifest?.dir ??
-          `${app.vault?.configDir ?? ".obsidian"}/plugins/environment-variables`;
-        const filePath = `${pluginDir}/quickjs.js`;
-        try {
-          if (await adapter.exists(filePath)) {
-            code = await adapter.read(filePath);
-          }
-        } catch {
-          // Fall through to filesystem search
-        }
-      }
-    }
-
-    // 3. Local filesystem fallback (Node.js test environment / workspace root)
-    if (!code) {
-      if (options?.quickjsPath) {
-        try {
-          if (fs.existsSync(options.quickjsPath)) {
-            code = await fs.promises.readFile(options.quickjsPath, "utf8");
-          }
-        } catch {
-          // Handled below
-        }
-        if (!code) {
-          throw new ToolError("script_error", MISSING_QUICKJS_ERROR);
-        }
-      } else {
-        const candidates = [
-          path.join(process.cwd(), "quickjs.js"),
-          path.join(__dirname, "quickjs.js"),
-          path.join(__dirname, "../quickjs.js"),
-          path.join(__dirname, "../../quickjs.js"),
-        ];
-
-        for (const candidate of candidates) {
-          try {
-            if (fs.existsSync(candidate)) {
-              code = await fs.promises.readFile(candidate, "utf8");
-              break;
-            }
-          } catch {
-            // Continue searching candidates
-          }
-        }
-      }
-    }
-
-    if (!code) {
-      throw new ToolError("script_error", MISSING_QUICKJS_ERROR);
-    }
-
-    const mod: { exports: { default?: QuickJSSyncVariant } | QuickJSSyncVariant } = { exports: {} };
-    const req = typeof require !== "undefined" ? require : createRequire(typeof __filename !== "undefined" ? __filename : process.cwd());
-    const wrapper = vmModule.runInThisContext(
-      `((module, exports, require) => {\n${code}\n})`,
-      { filename: "quickjs.js" },
-    ) as (module: unknown, exports: unknown, require: unknown) => void;
-    wrapper(mod, mod.exports, req);
-    const resolvedVariant = ((mod.exports as { default?: QuickJSSyncVariant }).default ?? mod.exports) as QuickJSSyncVariant;
-
-    return await newQuickJSWASMModuleFromVariant(resolvedVariant);
-  })();
-
-  if (!options) {
-    defaultQuickJS = loadPromise;
+// The QuickJS variant is bundled into main.js: the community store only ships main.js, manifest.json and styles.css.
+function loadQuickJS(): Promise<QuickJSWASMModule> {
+  if (!defaultQuickJS) {
+    defaultQuickJS = newQuickJSWASMModuleFromVariant(quickjsVariant);
     defaultQuickJS.catch(() => {
       defaultQuickJS = null;
     });
   }
-
-  return loadPromise;
+  return defaultQuickJS;
 }
 
 export type Bridge = (method: string, params: unknown) => Promise<unknown>;
@@ -204,10 +83,8 @@ export interface ScriptRun {
 }
 
 export class ScriptRunner {
-  constructor(private readonly options?: ScriptRunnerOptions) {}
-
   async run(job: ScriptRun): Promise<unknown> {
-    const QuickJS = await loadQuickJS(this.options);
+    const QuickJS = await loadQuickJS();
     const runtime = QuickJS.newRuntime();
     runtime.setMemoryLimit(MEMORY_LIMIT_BYTES);
     runtime.setMaxStackSize(STACK_LIMIT_BYTES);

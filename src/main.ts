@@ -1,4 +1,5 @@
 import { Editor, FileSystemAdapter, Notice, normalizePath, Plugin, setIcon, TFolder } from "obsidian";
+import type { ResponseWriter } from "./tools/savedResponses";
 import { AuditLog } from "./audit/auditLog";
 import { createSetupHandler, HooksDataPusher, hooksHosts, toolNoteFolders } from "./ecosystem/hooksFeed";
 import { installAndEnableEcosystem } from "./ecosystem/installEcosystem";
@@ -364,6 +365,17 @@ export default class EnvironmentVariablesPlugin extends Plugin {
     });
   }
 
+  /** Writer for saved HTTP responses, rooted at the plugin folder under the vault config dir. */
+  private responseWriter(): ResponseWriter {
+    const adapter = this.app.vault.adapter;
+    return {
+      exists: (p) => adapter.exists(p),
+      mkdir: (p) => adapter.mkdir(p),
+      write: (p, c) => adapter.write(p, c),
+      dir: `${this.app.vault.configDir}/plugins/environment-variables/respostas`,
+    };
+  }
+
   onunload(): void {
     this.disposeSetupHandler?.();
     this.disposeSetupHandler = undefined;
@@ -669,7 +681,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
           broker: this.broker,
           client: this.resolveHubClient(ctx.client),
           tools: this.tools,
-          responseWriter: this.app.vault.adapter,
+          responseWriter: this.responseWriter(),
         });
         return {
           content: res.content,
@@ -915,7 +927,7 @@ export default class EnvironmentVariablesPlugin extends Plugin {
       tools: this.tools,
       guide: (request, topic) => this.agentGuide(request, topic),
       vault: { id: this.vaultId, name: this.vaultName },
-      responseWriter: this.app.vault.adapter,
+      responseWriter: this.responseWriter(),
       authenticate: async (token) => {
         const client = await findClient(this.data.clients, token);
         if (!client) return null;

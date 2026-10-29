@@ -41,23 +41,9 @@ const mainContext = await esbuild.context({
   minify: prod,
 });
 
-const quickjsContext = await esbuild.context({
-  entryPoints: ["src/tools/quickjsEntry.ts"],
-  bundle: true,
-  external: nodeBuiltins,
-  format: "cjs",
-  target: "es2022",
-  logLevel: "info",
-  sourcemap: prod ? false : "inline",
-  treeShaking: true,
-  outfile: "quickjs.js",
-  minify: prod,
-});
-
 if (prod) {
   await mainContext.rebuild();
-  await quickjsContext.rebuild();
   process.exit(0);
 } else {
-  await Promise.all([mainContext.watch(), quickjsContext.watch()]);
+  await mainContext.watch();
 }

@@ -30,7 +30,7 @@ describe("saveResponse unit tests", () => {
     const res = await saveResponse(writer, body, id);
 
     expect(res.top_keys).toEqual(["a", "b"]);
-    expect(res.saved_to.startsWith(".obsidian/plugins/environment-variables/respostas/")).toBe(true);
+    expect(res.saved_to.startsWith("plugins/environment-variables/respostas/")).toBe(true);
     expect(res.saved_to.endsWith(".json")).toBe(true);
     expect(res.saved_to).toBe(`${SAVED_RESPONSES_DIR}/test-uuid-1.json`);
     expect(res.bytes).toBe(new TextEncoder().encode(body).length);
@@ -115,7 +115,7 @@ describe("http_request save_to BDD criteria", () => {
     const structured = res.structuredContent as Record<string, unknown>;
     expect(structured.ok).toBe(true);
     expect(typeof structured.saved_to).toBe("string");
-    expect((structured.saved_to as string).startsWith(".obsidian/plugins/environment-variables/respostas/")).toBe(true);
+    expect((structured.saved_to as string).startsWith("plugins/environment-variables/respostas/")).toBe(true);
     expect((structured.saved_to as string).endsWith(".json")).toBe(true);
     expect(structured.top_keys).toEqual(["a", "b"]);
     expect(structured.status).toBe(200);
