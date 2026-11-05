@@ -34,6 +34,10 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
 
     const s = this.plugin.data.settings;
 
+    // Note: Setting and the Obsidian components define then(cb), so they are "thenables". Never return one
+    // from a .then/.catch/.finally callback or an async function: the Promise would loop forever on it
+    // and freeze Obsidian (Obsidian 1.15+). Use a block body instead.
+
     // --- Language ---
     new Setting(containerEl).setHeading().setName(t("settings.languageGroup"));
 
@@ -291,7 +295,9 @@ export class EnvironmentVariablesSettingTab extends PluginSettingTab {
     setting.setName(t("settings.storageFile")).setDesc(t("settings.storageDesc", { path }));
     void this.plugin.app.vault.adapter
       .read(path)
-      .then((text) => setting.setDesc(`${t("settings.storageDesc", { path })} ${t("settings.format", { format: describeVault(text) })}`))
+      .then((text) => {
+        setting.setDesc(`${t("settings.storageDesc", { path })} ${t("settings.format", { format: describeVault(text) })}`);
+      })
       .catch(() => undefined);
   }
 }

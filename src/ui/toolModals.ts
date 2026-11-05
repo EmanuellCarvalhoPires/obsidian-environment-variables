@@ -74,7 +74,10 @@ export class ToolRunModal extends Modal {
               output.createEl("pre", { text: typeof value === "string" ? value : JSON.stringify(value, null, 2), cls: "ev-tool-code" });
             })
             .catch((err: unknown) => error.setText(err instanceof Error ? err.message : String(err)))
-            .finally(() => b.setDisabled(false).setButtonText(t("modal.toolRun.run")));
+            .finally(() => {
+              // Block body on purpose: returning the button (a thenable) would make the Promise loop forever.
+              b.setDisabled(false).setButtonText(t("modal.toolRun.run"));
+            });
         }),
     );
   }
