@@ -175,7 +175,7 @@ describe("SecretVaultService (Service Bus 'secrets' provider)", () => {
 
   it("raw body: placeholder text goes out unchanged, and a body holding a stored secret value is refused", async () => {
     const { store } = await unlockedStore();
-    const token = "55443322:AAH_raw_body_token_value_for_tests";
+    const token = "mock-raw-body-token-value-for-tests";
     await store.add({
       name: "GITHUB_RAW_TOKEN",
       type: "token",
